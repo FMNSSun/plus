@@ -98,6 +98,104 @@ func TestSerializePacket1(t *testing.T) {
   }
 }
 
+// Trying to read PCF flags in an extended packet
+func TestReadPCF(t *testing.T) {
+  packet := []byte{
+            0xD8, 0x00, 0x7F, 0xFF, //magic + flags (x bit set)
+            0x12, 0x34, 0x56, 0x78, // cat
+            0x12, 0x34, 0x56, 0x78, // cat..
+            0x13, 0x11, 0x11, 0x11, // psn
+            0x23, 0x22, 0x22, 0x22, // pse
+            0x01, 0x1B,             // PCF Type := 0x01, 
+                                    // PCF Len 6, PCF I = 11b,
+            0x01, 0x02, 0x03, 0x04,
+            0x05, 0x06,             // 6 bytes PCF value
+            0x99, 0x98, 0x97, 0x96}  // 4 bytes payload
+
+
+
+  lFlag := true
+  rFlag := true
+  sFlag := true
+  cat := uint64(0x1234567812345678)
+  psn := uint32(0x13111111)
+  pse := uint32(0x23222222)
+  pcfType := uint16(0x01)
+  pcfLen := uint8(0x06)
+  pcfIntegrity := uint8(0x03)
+  //pcfValue := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
+  //payload := []byte{0x99, 0x98, 0x97, 0x96}
+
+  var plusPacket PLUSPacket
+  plusPacket.SetBuffer(packet)
+
+  if(plusPacket.LFlag() != lFlag) {
+    t.Errorf("Wrong lFlag")
+    return
+  }
+
+  if(plusPacket.RFlag() != rFlag) {
+    t.Errorf("Wrong RFlag")
+    return
+  }
+
+  if(plusPacket.SFlag() != sFlag) {
+    t.Errorf("Wrong SFlag")
+    return
+  }
+
+  if(plusPacket.CAT() != cat) {
+    t.Errorf("Wrong CAT")
+    return
+  }
+
+  if(plusPacket.PSN() != psn) {
+    t.Errorf("Wrong PSN")
+    return
+  }
+
+  if(plusPacket.PSE() != pse) {
+    t.Errorf("Wrong PSE")
+    return
+  }
+
+  pcfType_, err := plusPacket.PCFType()
+
+  if(err != nil) {
+    t.Errorf("Error: %s", err.Error())
+    return
+  }
+
+  if(pcfType_ != pcfType) {
+    t.Errorf("Wrong PCF Type")
+    return
+  }
+
+  pcfLen_, err := plusPacket.PCFLen()
+
+  if(err != nil) {
+    t.Errorf("Error: %s", err.Error())
+    return
+  }
+
+  if(pcfLen_ != pcfLen) {
+    t.Errorf("Wrong PCF Len. Got %d but expected %d", pcfLen_, pcfLen)
+    return
+  }
+
+  pcfIntegrity_, err := plusPacket.PCFIntegrity()
+
+  if(err != nil) {
+    t.Errorf("Error: %s", err.Error())
+    return
+  }
+
+  if(pcfIntegrity_ != pcfIntegrity) {
+    t.Errorf("Wrong PCF Integrity")
+    return
+  }
+}
+
 // Trying to read PCF flags in a basic packet should return 
 // an error.
 func TestReadPCFInBasicPacket(t *testing.T) {

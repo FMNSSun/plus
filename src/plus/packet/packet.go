@@ -318,7 +318,7 @@ func (plusPacket *PLUSPacket) SetBuffer(buffer []byte) error {
       pcfI = 0
     }
 
-    buffer[pcfLenIPos] = pcfLen << 6 | pcfI
+    buffer[pcfLenIPos] = pcfLen << 2 | pcfI
   }
 
   plusPacket.headerLen = expectedLength
