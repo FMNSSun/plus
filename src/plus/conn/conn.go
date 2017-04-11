@@ -86,8 +86,7 @@ func (*PLUSConn) LocalAddr() net.Addr {
 func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
   // TODO: Handle client IP address changes
   select {
-    case <- conn.inChannel:
-      plusPacket := <- conn.inChannel
+    case plusPacket := <- conn.inChannel:
       n := copy(b, plusPacket.Payload())
       return n, nil, nil
   }
