@@ -17,6 +17,7 @@ type PLUSConn struct {
 
 const maxPacketSize int = 4096
 const STATE_ZERO uint16 = 0
+const STATE_UNIFLOW uint16 = 1
 
 func ListenPLUS(laddr string) (*PLUSListener, error) {
   packetConn, err := net.ListenPacket("udp", laddr)
@@ -61,7 +62,7 @@ func (listener *PLUSListener) listen() {
 
 func (listener *PLUSListener) addConnection(cat uint64) (*PLUSConn)  {
   var plusConnection PLUSConn
-  plusConnection.state = STATE_ZERO
+  plusConnection.state = STATE_UNIFLOW
   plusConnection.inChannel = make(chan *packet.PLUSPacket)
   plusConnection.cat = cat
   listener.plusConnections[cat] = &plusConnection
