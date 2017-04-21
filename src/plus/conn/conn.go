@@ -239,9 +239,7 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
   conn.updateRemoteAddr(remoteAddr)
 
   // In order packet? Then update PSE
-  if(plusPacket.PSN() == conn.pse + 1) {
-    conn.pse += 1
-  }
+  conn.pse = plusPacket.PSN()
 
   sendToChan := true
 
