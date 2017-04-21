@@ -42,6 +42,20 @@ const STATE_STOP_SENT uint16 = 5
 const STATE_STOP_RECV uint16 = 6
 const STATE_CLOSED uint16 = 7
 
+func StateToString(state uint16) string {
+  switch(state) {
+  case STATE_ZERO: return "ZERO"
+  case STATE_UNIFLOW_RECV: return "UNIFLOW_RECV"
+  case STATE_UNIFLOW_SENT: return "UNIFLOW_SENT"
+  case STATE_ASSOCIATING: return "ASSOCIATING"
+  case STATE_ASSOCIATED: return "ASSOCIATED"
+  case STATE_STOP_SENT: return "STOP_SENT"
+  case STATE_STOP_RECV: return "STOP_RECV"
+  case STATE_CLOSED: return "CLOSED"
+  }
+  return "N/A"
+}
+
 func ListenPLUS(laddr string) (*PLUSListener, error) {
   packetConn, err := net.ListenPacket("udp", laddr)
   
@@ -96,6 +110,8 @@ func (conn *PLUSConn) RemoteAddr() net.Addr {
 }
 
 func (conn *PLUSConn) setState(newState uint16) {
+  conn.logger.Print(fmt.Sprintf("Old state: %s, New State: %s [-> %s]", StateToString(conn.state), StateToString(newState), conn.RemoteAddr().String()))
+  conn.state = newState
   switch newState {
   case STATE_ZERO:
      conn.onStateZero()
@@ -152,6 +168,7 @@ func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket, size int) (int, 
 
   switch conn.state {
   case STATE_ZERO: 
+    conn.setState(STATE_UNIFLOW_SENT)
     break
   case STATE_UNIFLOW_RECV:
     // Up to this point we only sent stuff
@@ -221,10 +238,16 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
 
   conn.updateRemoteAddr(remoteAddr)
 
+  // In order packet? Then update PSE
+  if(plusPacket.PSN() == conn.pse + 1) {
+    conn.pse += 1
+  }
+
   sendToChan := true
 
   switch conn.state {
   case STATE_ZERO: 
+    conn.setState(STATE_UNIFLOW_RECV)
     break
   case STATE_UNIFLOW_RECV:
     break
@@ -365,16 +388,24 @@ func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
   return 0, nil, nil
 }
 
+func (conn *PLUSConn) sendData(b []byte) (int, error) {
+  plusPacket := packet.NewBasicPLUSPacket(conn.defaultLFlag, conn.defaultLFlag, false,
+                   conn.cat, conn.psn, conn.pse, b)
+
+  conn.psn++
+
+  return conn.sendPacket(plusPacket, len(b))
+}
+
 func (conn *PLUSConn) WriteTo(b []byte, addr net.Addr) (int, error) {
   // NOTE: We're ignoring Addr here because PLUS takes care of IP address changes.
   //       Which means yeah... we override the address the overlaying layer wants stuff
   //       to send to. Also... all the protocol stuff should be done elsehwere.
 
-  plusPacket := packet.NewBasicPLUSPacket(conn.defaultLFlag, conn.defaultLFlag, false,
-                   conn.cat, conn.psn, conn.pse, b)
-
-  return conn.sendPacket(plusPacket, len(b))
+  return conn.sendData(b)
 }
+
+  
 
 func (*PLUSConn) SetDeadline(t time.Time) error {
   return nil
