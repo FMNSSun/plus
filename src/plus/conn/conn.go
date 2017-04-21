@@ -6,6 +6,7 @@ import "plus/packet"
 import "fmt"
 import "log"
 import "os"
+import "sync"
 
 type PLUSListener struct {
   packetConn net.PacketConn
@@ -29,6 +30,7 @@ type PLUSConn struct {
   kMaxOutOfOrder uint32
   remoteAddr net.Addr
   logger *log.Logger
+  mutex *sync.RWMutex
 }
 
 const maxPacketSize int = 4096
@@ -106,11 +108,15 @@ func DialPLUS(laddr string, remoteAddr net.Addr) (*PLUSConn, error) {
 }
 
 func (conn *PLUSConn) RemoteAddr() net.Addr {
-  return conn.remoteAddr
+  conn.mutex.RLock()
+  addr := conn.remoteAddr
+  conn.mutex.RUnlock()
+  return addr
 }
 
+// Requires that the mutex is locked by the caller
 func (conn *PLUSConn) setState(newState uint16) {
-  conn.logger.Print(fmt.Sprintf("Old state: %s, New State: %s [-> %s]", StateToString(conn.state), StateToString(newState), conn.RemoteAddr().String()))
+  conn.logger.Print(fmt.Sprintf("Old state: %s, New State: %s", StateToString(conn.state), StateToString(newState)))
   conn.state = newState
   switch newState {
   case STATE_ZERO:
@@ -152,19 +158,37 @@ func (conn *PLUSConn) onStateStopRecv() {
 func (conn *PLUSConn) onStateClosed() {
 }
 
-func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket, size int) (int, error) {
+func (conn *PLUSConn) updateStateReceive(plusPacket *packet.PLUSPacket) {
+  conn.mutex.Lock()
+  defer conn.mutex.Unlock()
 
-  conn.logger.Print(fmt.Sprintf("sendPacket: Sending packet PSN := %d, PSE := %d", plusPacket.PSN(), plusPacket.PSE()))
-  conn.logger.Print(plusPacket.Buffer())
-  
-  packetCAT := plusPacket.CAT()
-
-  if(packetCAT != conn.cat) {
-    // There's no sane sitution in which this can happen. 
-    panic(fmt.Sprintf("Expected CAT %d but tried sending packet with CAT %d!", conn.cat, packetCAT))
+  switch conn.state {
+  case STATE_ZERO: 
+    conn.setState(STATE_UNIFLOW_RECV)
+    break
+  case STATE_UNIFLOW_RECV:
+    break
+  case STATE_UNIFLOW_SENT:
+    // Up to this point we only received stuff
+    conn.setState(STATE_ASSOCIATED)
+    break
+  case STATE_STOP_SENT:
+    // We sent a stop and received a stop?
+    if(plusPacket.SFlag()) {
+      conn.setState(STATE_CLOSED)
+    }
+    break
+  case STATE_STOP_RECV:
+    break
+  case STATE_CLOSED:
+    // Connection closed.
+    break
   }
+}
 
-  stop := false
+func (conn *PLUSConn) updateStateSend(plusPacket *packet.PLUSPacket) {
+  conn.mutex.Lock()
+  defer conn.mutex.Unlock()
 
   switch conn.state {
   case STATE_ZERO: 
@@ -181,37 +205,73 @@ func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket, size int) (int, 
   case STATE_STOP_RECV:
     // We received a stop packet and now are trying to send one?
     if(plusPacket.SFlag()) {
-      stop = true
+      conn.setState(STATE_CLOSED)
     }
     break
   case STATE_CLOSED:
-    conn.logger.Print("sendPacket: Send on closed connection!")
-    return 0,  fmt.Errorf("Connection has been closed.")
+    break
+  }
+}
+
+func (conn *PLUSConn) IsClosed() bool {
+  conn.mutex.RLock()
+  state := conn.state
+  conn.mutex.RUnlock()
+  if(state == STATE_CLOSED) {
+    return true
+  } else {
+    return false
+  }
+}
+
+func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket, size int) (int, error) {
+  if(conn.IsClosed()) {
+    return 0, fmt.Errorf("Connection is closed!")
+  }
+
+  conn.logger.Print(fmt.Sprintf("sendPacket: Sending packet PSN := %d, PSE := %d", plusPacket.PSN(), plusPacket.PSE()))
+  conn.logger.Print(plusPacket.Buffer())
+  
+  packetCAT := plusPacket.CAT()
+
+  if(packetCAT != conn.cat) {
+    // There's no sane sitution in which this can happen. 
+    panic(fmt.Sprintf("Expected CAT %d but tried sending packet with CAT %d!", conn.cat, packetCAT))
   }
 
   buffer := plusPacket.Buffer()
   buflen := len(buffer)
 
-  conn.logger.Print(fmt.Sprintf("sendPacket: WriteTo %s", conn.RemoteAddr().String()))
-  n, err := conn.packetConn.WriteTo(buffer, conn.RemoteAddr())
+  remoteAddr := conn.remoteAddr
+
+  conn.logger.Print(fmt.Sprintf("sendPacket: WriteTo %s", remoteAddr.String()))
+
+  n, err := conn.packetConn.WriteTo(buffer, remoteAddr)
 
   if(n != buflen) {
     return n, fmt.Errorf("Expected to send %d bytes but sent were %d bytes!", n, buflen)
-  }
-
-  if(stop) {
-    conn.setState(STATE_CLOSED)
   }
 
   if(err != nil) {
     return 0, err
   }
 
+  defer conn.updateStateSend(plusPacket)
+
   return size, nil
 }
 
+func (conn *PLUSConn) State() uint16 {
+  conn.mutex.RLock()
+  state := conn.state
+  conn.mutex.RUnlock()
+  return state
+}
+
 func (conn *PLUSConn) updateRemoteAddr(remoteAddr net.Addr) {
+  conn.mutex.Lock()
   conn.remoteAddr = remoteAddr
+  conn.mutex.Unlock()
 }
 
 func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteAddr net.Addr)  {
@@ -237,40 +297,16 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
   }
 
   conn.updateRemoteAddr(remoteAddr)
+  
 
   // In order packet? Then update PSE
   conn.pse = plusPacket.PSN()
 
-  sendToChan := true
-
-  switch conn.state {
-  case STATE_ZERO: 
-    conn.setState(STATE_UNIFLOW_RECV)
-    break
-  case STATE_UNIFLOW_RECV:
-    break
-  case STATE_UNIFLOW_SENT:
-    // Up to this point we only received stuff
-    conn.setState(STATE_ASSOCIATED)
-    break
-  case STATE_STOP_SENT:
-    // We sent a stop and received a stop?
-    if(plusPacket.SFlag()) {
-      conn.setState(STATE_CLOSED)
-    }
-    break
-  case STATE_STOP_RECV:
-    break
-  case STATE_CLOSED:
-    // Connection closed.
-    // FIXME: Do we keep the packet?
-    sendToChan = false
-    break
-  }
-
-  if(sendToChan) {
+  if(true) {
     conn.inChannel <- plusPacket
   }
+
+  conn.updateStateReceive(plusPacket)
 }
 
 func (listener *PLUSListener) listen() {
@@ -319,6 +355,10 @@ func (listener *PLUSListener) addConnection(cat uint64) (*PLUSConn)  {
 
   var plusConnection PLUSConn
 
+  plusConnection.mutex = &sync.RWMutex{}
+  plusConnection.mutex.Lock()
+  defer plusConnection.mutex.Unlock()
+
   /* Server mode or client mode? */
   if(listener.serverMode) {
     plusConnection.state = STATE_UNIFLOW_RECV
@@ -331,15 +371,15 @@ func (listener *PLUSListener) addConnection(cat uint64) (*PLUSConn)  {
 
   plusConnection.inChannel = make(chan *packet.PLUSPacket)
   plusConnection.cat = cat
-  listener.connections[cat] = &plusConnection
   plusConnection.defaultLFlag = false
   plusConnection.defaultRFlag = false
   plusConnection.packetConn = listener.packetConn
   plusConnection.pse = 0
   plusConnection.psn = 1
   plusConnection.kMaxOutOfOrder = uint32(mUint32/2)
-
   plusConnection.logger = log.New(os.Stdout, fmt.Sprintf("Connection %d: ", cat), log.Lshortfile)
+
+  listener.connections[cat] = &plusConnection
 
   return &plusConnection
 }
