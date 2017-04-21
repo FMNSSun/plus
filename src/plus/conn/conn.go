@@ -294,7 +294,7 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
   // Update PSE
   conn.pse = plusPacket.PSN()
 
-  if(true) {
+  if(conn.state != STATE_CLOSED) {
     conn.inChannel <- plusPacket
   }
 
