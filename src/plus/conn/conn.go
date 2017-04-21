@@ -27,7 +27,6 @@ type PLUSConn struct {
   defaultRFlag bool
   pse uint32
   psn uint32
-  kMaxOutOfOrder uint32
   remoteAddr net.Addr
   logger *log.Logger
   mutex *sync.RWMutex
@@ -115,7 +114,7 @@ func (conn *PLUSConn) RemoteAddr() net.Addr {
 }
 
 // Requires that the mutex is locked by the caller
-func (conn *PLUSConn) setState(newState uint16) {
+func (conn *PLUSConn) _need_lock_setState(newState uint16) {
   conn.logger.Print(fmt.Sprintf("Old state: %s, New State: %s", StateToString(conn.state), StateToString(newState)))
   conn.state = newState
   switch newState {
@@ -159,23 +158,20 @@ func (conn *PLUSConn) onStateClosed() {
 }
 
 func (conn *PLUSConn) updateStateReceive(plusPacket *packet.PLUSPacket) {
-  conn.mutex.Lock()
-  defer conn.mutex.Unlock()
-
   switch conn.state {
   case STATE_ZERO: 
-    conn.setState(STATE_UNIFLOW_RECV)
+    conn._need_lock_setState(STATE_UNIFLOW_RECV)
     break
   case STATE_UNIFLOW_RECV:
     break
   case STATE_UNIFLOW_SENT:
     // Up to this point we only received stuff
-    conn.setState(STATE_ASSOCIATED)
+    conn._need_lock_setState(STATE_ASSOCIATED)
     break
   case STATE_STOP_SENT:
     // We sent a stop and received a stop?
     if(plusPacket.SFlag()) {
-      conn.setState(STATE_CLOSED)
+      conn._need_lock_setState(STATE_CLOSED)
     }
     break
   case STATE_STOP_RECV:
@@ -187,16 +183,13 @@ func (conn *PLUSConn) updateStateReceive(plusPacket *packet.PLUSPacket) {
 }
 
 func (conn *PLUSConn) updateStateSend(plusPacket *packet.PLUSPacket) {
-  conn.mutex.Lock()
-  defer conn.mutex.Unlock()
-
   switch conn.state {
   case STATE_ZERO: 
-    conn.setState(STATE_UNIFLOW_SENT)
+    conn._need_lock_setState(STATE_UNIFLOW_SENT)
     break
   case STATE_UNIFLOW_RECV:
     // Up to this point we only sent stuff
-    conn.setState(STATE_ASSOCIATED)
+    conn._need_lock_setState(STATE_ASSOCIATED)
     break
   case STATE_UNIFLOW_SENT:
     break
@@ -205,7 +198,7 @@ func (conn *PLUSConn) updateStateSend(plusPacket *packet.PLUSPacket) {
   case STATE_STOP_RECV:
     // We received a stop packet and now are trying to send one?
     if(plusPacket.SFlag()) {
-      conn.setState(STATE_CLOSED)
+      conn._need_lock_setState(STATE_CLOSED)
     }
     break
   case STATE_CLOSED:
@@ -215,17 +208,26 @@ func (conn *PLUSConn) updateStateSend(plusPacket *packet.PLUSPacket) {
 
 func (conn *PLUSConn) IsClosed() bool {
   conn.mutex.RLock()
-  state := conn.state
-  conn.mutex.RUnlock()
-  if(state == STATE_CLOSED) {
-    return true
+  closed := false
+  if(conn.state == STATE_CLOSED) {
+    closed = true
   } else {
-    return false
+    closed = false
   }
+  conn.mutex.RUnlock()
+  return closed
+}
+
+
+func (conn *PLUSConn) CAT() uint64 {
+  conn.mutex.Lock()
+  cat := conn.cat
+  conn.mutex.Unlock()
+  return cat
 }
 
 func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket, size int) (int, error) {
-  if(conn.IsClosed()) {
+  if(conn.state == STATE_CLOSED) {
     return 0, fmt.Errorf("Connection is closed!")
   }
 
@@ -256,7 +258,7 @@ func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket, size int) (int, 
     return 0, err
   }
 
-  defer conn.updateStateSend(plusPacket)
+  conn.updateStateSend(plusPacket)
 
   return size, nil
 }
@@ -269,12 +271,11 @@ func (conn *PLUSConn) State() uint16 {
 }
 
 func (conn *PLUSConn) updateRemoteAddr(remoteAddr net.Addr) {
-  conn.mutex.Lock()
   conn.remoteAddr = remoteAddr
-  conn.mutex.Unlock()
 }
 
 func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteAddr net.Addr)  {
+  conn.mutex.Lock()
 
   conn.logger.Print(fmt.Sprintf("Received packet PSN := %d, PSE := %d", plusPacket.PSN(), plusPacket.PSE()))
   conn.logger.Print(plusPacket.Buffer())
@@ -286,20 +287,11 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
     panic(fmt.Sprintf("Expected CAT %d but received packet with CAT %d!", conn.cat, packetCAT))
   }
 
-  // Try to catch bogus packets where somebody sends bogus packets with random
-  // PSNs. Obviously won't help much. The idea is that if we receive packet 5 then packet 3434344
-  // and expected packet 6 then the packet 3434344 is probably a bogus one.
-  distance := (mUint32 - uint64(conn.pse) + uint64(plusPacket.PSN())) % mUint32
-
-  if(distance > uint64(conn.kMaxOutOfOrder)) {
-    // drop the packet
-    return
-  }
 
   conn.updateRemoteAddr(remoteAddr)
   
 
-  // In order packet? Then update PSE
+  // Update PSE
   conn.pse = plusPacket.PSN()
 
   if(true) {
@@ -307,6 +299,8 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
   }
 
   conn.updateStateReceive(plusPacket)
+
+  conn.mutex.Unlock()
 }
 
 func (listener *PLUSListener) listen() {
@@ -376,7 +370,6 @@ func (listener *PLUSListener) addConnection(cat uint64) (*PLUSConn)  {
   plusConnection.packetConn = listener.packetConn
   plusConnection.pse = 0
   plusConnection.psn = 1
-  plusConnection.kMaxOutOfOrder = uint32(mUint32/2)
   plusConnection.logger = log.New(os.Stdout, fmt.Sprintf("Connection %d: ", cat), log.Lshortfile)
 
   listener.connections[cat] = &plusConnection
@@ -427,6 +420,9 @@ func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
 }
 
 func (conn *PLUSConn) sendData(b []byte) (int, error) {
+  conn.mutex.Lock()
+  defer conn.mutex.Unlock()
+
   plusPacket := packet.NewBasicPLUSPacket(conn.defaultLFlag, conn.defaultLFlag, false,
                    conn.cat, conn.psn, conn.pse, b)
 
