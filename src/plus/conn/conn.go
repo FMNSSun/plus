@@ -32,6 +32,7 @@ type PLUSConn struct {
   mutex *sync.RWMutex
 }
 
+
 const maxPacketSize int = 4096
 const mUint32 uint64 = 4294967296
 
@@ -243,11 +244,18 @@ func (conn *PLUSConn) CAT() uint64 {
   return cat
 }
 
+// Send a raw packet. 
+func (conn *PLUSConn) SendPacket(plusPacket *packet.PLUSPacket) error {
+  conn.mutex.Lock()
+  defer conn.mutex.Unlock()
+  return conn.sendPacket(plusPacket)
+}
+
 // Send a packet. This function will send the bytes of the packet through
 // the underlying packet conn to the connections' current remote address.
-func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket, size int) (int, error) {
+func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket) error {
   if(conn.state == STATE_CLOSED) {
-    return 0, fmt.Errorf("Connection is closed!")
+    return fmt.Errorf("Connection is closed!")
   }
 
   conn.logger.Print(fmt.Sprintf("sendPacket: Sending packet PSN := %d, PSE := %d", plusPacket.PSN(), plusPacket.PSE()))
@@ -270,16 +278,16 @@ func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket, size int) (int, 
   n, err := conn.packetConn.WriteTo(buffer, remoteAddr)
 
   if(n != buflen) {
-    return n, fmt.Errorf("Expected to send %d bytes but sent were %d bytes!", n, buflen)
+    return fmt.Errorf("Expected to send %d bytes but sent were %d bytes!", n, buflen)
   }
 
   if(err != nil) {
-    return 0, err
+    return err
   }
 
   conn.updateStateSend(plusPacket)
 
-  return size, nil
+  return nil
 }
 
 // Returns the state of this connection
@@ -437,6 +445,8 @@ func (conn *PLUSConn) LocalAddr() net.Addr {
   return conn.packetConn.LocalAddr()
 }
 
+// Read bytes from the connection into the supplied buffer and return the
+// number of bytes read, this connection's current remote address.
 func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
   // NOTE: This function should have as little logic as necessary.
   //       All the protocol stuff should be done elsewhere. This is just a dummy
@@ -453,6 +463,21 @@ func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
   return 0, nil, nil
 }
 
+// similar to ReadFrom but does not return an address
+func (conn *PLUSConn) Read(b []byte) (int, error) {
+  n, _, err := conn.ReadFrom(b)
+  return n, err
+}
+
+// Read a raw packet
+func (conn *PLUSConn) ReadPacket() (*packet.PLUSPacket, error) {
+  select {
+    case plusPacket := <- conn.inChannel:
+
+      return plusPacket, nil
+  }
+}
+
 // Sends data in a PLUS packet with a basic header.
 // This essentially creates the PLUS packet and then calls
 // sendPacket.
@@ -465,7 +490,22 @@ func (conn *PLUSConn) sendData(b []byte) (int, error) {
 
   conn.psn++
 
-  return conn.sendPacket(plusPacket, len(b))
+  return len(b), conn.sendPacket(plusPacket)
+}
+
+// Sends data in a PLUS packet with a basic header with the specified flags set.
+// This essentially creates the PLUS packet and then calls
+// sendPacket.
+func (conn *PLUSConn) sendDataWithFlags(b []byte, lFlag bool, rFlag bool, sFlag bool) (int, error) {
+  conn.mutex.Lock()
+  defer conn.mutex.Unlock()
+
+  plusPacket := packet.NewBasicPLUSPacket(lFlag, rFlag, sFlag,
+                   conn.cat, conn.psn, conn.pse, b)
+
+  conn.psn++
+
+  return len(b), conn.sendPacket(plusPacket)
 }
 
 // Write bytes. The addr argument will be ignored because PLUS handles
@@ -476,6 +516,17 @@ func (conn *PLUSConn) WriteTo(b []byte, addr net.Addr) (int, error) {
   //       to send to. Also... all the protocol stuff should be done elsehwere.
 
   return conn.sendData(b)
+}
+
+// see WriteTo. 
+func (conn *PLUSConn) Write(b []byte) (int, error) {
+  return conn.sendData(b)
+}
+
+// see WriteTo. This function allows to specify flags for the basic PLUS header of the packet
+// this data is sent with.
+func (conn *PLUSConn) WriteWithFlags(b []byte, lFlag bool, rFlag bool, sFlag bool) (int, error) {
+  return conn.sendDataWithFlags(b, lFlag, rFlag, sFlag)
 }
 
   
