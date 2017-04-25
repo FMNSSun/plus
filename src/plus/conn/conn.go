@@ -34,15 +34,25 @@ type PLUSConn struct {
 
 const maxPacketSize int = 4096
 const mUint32 uint64 = 4294967296
+
+// ZERO State
 const STATE_ZERO uint16 = 0
+// Only received, nothing sent so far
 const STATE_UNIFLOW_RECV uint16 = 1
+// Only sent, nothing received so far.
 const STATE_UNIFLOW_SENT uint16 = 2
+// Unused
 const STATE_ASSOCIATING uint16 = 3
+// Received and sent packets
 const STATE_ASSOCIATED uint16 = 4
+// Sent a packet with the S flag set
 const STATE_STOP_SENT uint16 = 5
+// Received a packet with the S flag set
 const STATE_STOP_RECV uint16 = 6
+// Connection closed
 const STATE_CLOSED uint16 = 7
 
+// Return state as a human readable value.
 func StateToString(state uint16) string {
   switch(state) {
   case STATE_ZERO: return "ZERO"
@@ -57,6 +67,7 @@ func StateToString(state uint16) string {
   return "N/A"
 }
 
+// Create a PLUS server listening on laddr
 func ListenPLUS(laddr string) (*PLUSListener, error) {
   packetConn, err := net.ListenPacket("udp", laddr)
   
@@ -76,6 +87,8 @@ func ListenPLUS(laddr string) (*PLUSListener, error) {
   return &plusListener, nil
 }
 
+// Connect to a PLUS server. laddr is the local address and remoteAddr is the 
+// remote address.
 func DialPLUS(laddr string, remoteAddr net.Addr) (*PLUSConn, error) {
   packetConn, err := net.ListenPacket("udp", laddr)
   
@@ -106,6 +119,7 @@ func DialPLUS(laddr string, remoteAddr net.Addr) (*PLUSConn, error) {
   return plusConnection, nil
 }
 
+// Returns this connection's current remote address.
 func (conn *PLUSConn) RemoteAddr() net.Addr {
   conn.mutex.RLock()
   addr := conn.remoteAddr
@@ -113,8 +127,8 @@ func (conn *PLUSConn) RemoteAddr() net.Addr {
   return addr
 }
 
-// Requires that the mutex is locked by the caller
-func (conn *PLUSConn) _need_lock_setState(newState uint16) {
+// Set the state and call on*State functions
+func (conn *PLUSConn) setState(newState uint16) {
   conn.logger.Print(fmt.Sprintf("Old state: %s, New State: %s", StateToString(conn.state), StateToString(newState)))
   conn.state = newState
   switch newState {
@@ -157,21 +171,22 @@ func (conn *PLUSConn) onStateStopRecv() {
 func (conn *PLUSConn) onStateClosed() {
 }
 
+// Called to update the state on receiving a packet
 func (conn *PLUSConn) updateStateReceive(plusPacket *packet.PLUSPacket) {
   switch conn.state {
   case STATE_ZERO: 
-    conn._need_lock_setState(STATE_UNIFLOW_RECV)
+    conn.setState(STATE_UNIFLOW_RECV)
     break
   case STATE_UNIFLOW_RECV:
     break
   case STATE_UNIFLOW_SENT:
     // Up to this point we only received stuff
-    conn._need_lock_setState(STATE_ASSOCIATED)
+    conn.setState(STATE_ASSOCIATED)
     break
   case STATE_STOP_SENT:
     // We sent a stop and received a stop?
     if(plusPacket.SFlag()) {
-      conn._need_lock_setState(STATE_CLOSED)
+      conn.setState(STATE_CLOSED)
     }
     break
   case STATE_STOP_RECV:
@@ -182,14 +197,15 @@ func (conn *PLUSConn) updateStateReceive(plusPacket *packet.PLUSPacket) {
   }
 }
 
+// Called to update the state on sending a packet
 func (conn *PLUSConn) updateStateSend(plusPacket *packet.PLUSPacket) {
   switch conn.state {
   case STATE_ZERO: 
-    conn._need_lock_setState(STATE_UNIFLOW_SENT)
+    conn.setState(STATE_UNIFLOW_SENT)
     break
   case STATE_UNIFLOW_RECV:
     // Up to this point we only sent stuff
-    conn._need_lock_setState(STATE_ASSOCIATED)
+    conn.setState(STATE_ASSOCIATED)
     break
   case STATE_UNIFLOW_SENT:
     break
@@ -198,7 +214,7 @@ func (conn *PLUSConn) updateStateSend(plusPacket *packet.PLUSPacket) {
   case STATE_STOP_RECV:
     // We received a stop packet and now are trying to send one?
     if(plusPacket.SFlag()) {
-      conn._need_lock_setState(STATE_CLOSED)
+      conn.setState(STATE_CLOSED)
     }
     break
   case STATE_CLOSED:
@@ -206,6 +222,7 @@ func (conn *PLUSConn) updateStateSend(plusPacket *packet.PLUSPacket) {
   }
 }
 
+// Returns true if this connection is closed.
 func (conn *PLUSConn) IsClosed() bool {
   conn.mutex.RLock()
   closed := false
@@ -218,7 +235,7 @@ func (conn *PLUSConn) IsClosed() bool {
   return closed
 }
 
-
+// Returns the CAT
 func (conn *PLUSConn) CAT() uint64 {
   conn.mutex.Lock()
   cat := conn.cat
@@ -226,6 +243,8 @@ func (conn *PLUSConn) CAT() uint64 {
   return cat
 }
 
+// Send a packet. This function will send the bytes of the packet through
+// the underlying packet conn to the connections' current remote address.
 func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket, size int) (int, error) {
   if(conn.state == STATE_CLOSED) {
     return 0, fmt.Errorf("Connection is closed!")
@@ -263,6 +282,7 @@ func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket, size int) (int, 
   return size, nil
 }
 
+// Returns the state of this connection
 func (conn *PLUSConn) State() uint16 {
   conn.mutex.RLock()
   state := conn.state
@@ -270,10 +290,14 @@ func (conn *PLUSConn) State() uint16 {
   return state
 }
 
+// Update remote address
 func (conn *PLUSConn) updateRemoteAddr(remoteAddr net.Addr) {
   conn.remoteAddr = remoteAddr
 }
 
+// Called by the listener when a new packet is received. This function handles
+// protocol stuff such as updating the PSE and then adds the packet to a channel
+// that is read by the ReadFrom method of this connection.
 func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteAddr net.Addr)  {
   conn.mutex.Lock()
 
@@ -303,6 +327,9 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
   conn.mutex.Unlock()
 }
 
+// This listens on the internal packet connection for new packets, tries to
+// parse them as a PLUS packet and creates new connection if packets with
+// new CAT arrive. 
 func (listener *PLUSListener) listen() {
   listener.logger.Print(fmt.Sprintf("listen() on %s",listener.packetConn.LocalAddr().String()))
 
@@ -344,6 +371,8 @@ func (listener *PLUSListener) listen() {
   }
 }
 
+// Add and create a new connection. This is called when a new packet with a new CAT
+// is received. 
 func (listener *PLUSListener) addConnection(cat uint64) (*PLUSConn)  {
   listener.logger.Print(fmt.Sprintf("addConnection: %d", cat))
 
@@ -377,7 +406,9 @@ func (listener *PLUSListener) addConnection(cat uint64) (*PLUSConn)  {
   return &plusConnection
 }
 
-
+// Wait for a new connection and return it. Blocks forever.
+// A connection is considered a new connection if a packet
+// with a new CAT in the PLUS header is received.
 func (listener *PLUSListener) Accept() (net.PacketConn, error) {
   listener.logger.Print("Waiting for new connection...")
   conn := <- listener.newConnections
@@ -385,12 +416,14 @@ func (listener *PLUSListener) Accept() (net.PacketConn, error) {
   return conn, nil
 }
 
+// Closes this listener.
 func (listener *PLUSListener) Close() error {
   // TODO: Close channels an all that stuff
   listener.logger.Print("Close()")
   return listener.packetConn.Close()
 }
 
+// Closes this connection.
 func (conn *PLUSConn) Close() error {
   // TODO: Maybe we need to do some cleanup?
   // FIXME: This is obviously bullshit because all PLUSConn from the server share
@@ -399,6 +432,7 @@ func (conn *PLUSConn) Close() error {
   return conn.packetConn.Close()
 }
 
+// Returns the local address of this connection.
 func (conn *PLUSConn) LocalAddr() net.Addr {
   return conn.packetConn.LocalAddr()
 }
@@ -413,12 +447,15 @@ func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
     case plusPacket := <- conn.inChannel:
 
       n := copy(b, plusPacket.Payload())
-      return n, nil, nil
+      return n, conn.RemoteAddr(), nil
   }
 
   return 0, nil, nil
 }
 
+// Sends data in a PLUS packet with a basic header.
+// This essentially creates the PLUS packet and then calls
+// sendPacket.
 func (conn *PLUSConn) sendData(b []byte) (int, error) {
   conn.mutex.Lock()
   defer conn.mutex.Unlock()
@@ -431,6 +468,8 @@ func (conn *PLUSConn) sendData(b []byte) (int, error) {
   return conn.sendPacket(plusPacket, len(b))
 }
 
+// Write bytes. The addr argument will be ignored because PLUS handles
+// the remote address.
 func (conn *PLUSConn) WriteTo(b []byte, addr net.Addr) (int, error) {
   // NOTE: We're ignoring Addr here because PLUS takes care of IP address changes.
   //       Which means yeah... we override the address the overlaying layer wants stuff
@@ -440,15 +479,17 @@ func (conn *PLUSConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 }
 
   
-
+// TODO
 func (*PLUSConn) SetDeadline(t time.Time) error {
   return nil
 }
 
+// TODO
 func (*PLUSConn) SetReadDeadline(t time.Time) error {
   return nil
 }
 
+// TODO
 func (*PLUSConn) SetWriteDeadline(t time.Time) error {
   return nil
 }
