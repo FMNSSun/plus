@@ -14,9 +14,13 @@ type PLUSListener struct {
   newConnections chan *PLUSConn
   serverMode bool
   logger *log.Logger
+  mkObserver func(*PLUSConn) *PLUSObserver
 }
 
-
+// Implements the net.PacketConn interface but also
+// allows raw access and allows to register an observer
+// to be notified about state changes and receiving
+// of packets.
 type PLUSConn struct {
   inChannel chan *packet.PLUSPacket
   outChannel chan *packet.PLUSPacket
@@ -30,6 +34,13 @@ type PLUSConn struct {
   remoteAddr net.Addr
   logger *log.Logger
   mutex *sync.RWMutex
+  observer *PLUSObserver
+}
+
+type PLUSObserver struct {
+  onStateChanged func(*PLUSConn, uint16)
+  onBasicPacketReceived func(*PLUSConn, *packet.PLUSPacket)
+  onExtendedPacketReceived func(*PLUSConn, *packet.PLUSPacket)
 }
 
 
@@ -69,7 +80,7 @@ func StateToString(state uint16) string {
 }
 
 // Create a PLUS server listening on laddr
-func ListenPLUS(laddr string) (*PLUSListener, error) {
+func ListenPLUSWithObserver(laddr string, mkObserver func(*PLUSConn) *PLUSObserver) (*PLUSListener, error) {
   packetConn, err := net.ListenPacket("udp", laddr)
   
   if(err != nil) {
@@ -82,15 +93,21 @@ func ListenPLUS(laddr string) (*PLUSListener, error) {
   plusListener.serverMode = true
   plusListener.connections = make(map[uint64]*PLUSConn)
   plusListener.newConnections = make(chan *PLUSConn)
+  plusListener.mkObserver = mkObserver
 
   go plusListener.listen()
 
   return &plusListener, nil
 }
 
+// Create a PLUS server listening on laddr
+func ListenPLUS(laddr string) (*PLUSListener, error) {
+  return ListenPLUSWithObserver(laddr, nil)
+}
+
 // Connect to a PLUS server. laddr is the local address and remoteAddr is the 
 // remote address.
-func DialPLUS(laddr string, remoteAddr net.Addr) (*PLUSConn, error) {
+func DialPLUSWithObserver(laddr string, remoteAddr net.Addr, mkObserver func(*PLUSConn) *PLUSObserver) (*PLUSConn, error) {
   packetConn, err := net.ListenPacket("udp", laddr)
   
   if(err != nil) {
@@ -102,6 +119,7 @@ func DialPLUS(laddr string, remoteAddr net.Addr) (*PLUSConn, error) {
   plusListener.packetConn = packetConn
   plusListener.serverMode = false
   plusListener.connections = make(map[uint64]*PLUSConn)
+  plusListener.mkObserver = mkObserver
 
   go plusListener.listen()
 
@@ -118,6 +136,12 @@ func DialPLUS(laddr string, remoteAddr net.Addr) (*PLUSConn, error) {
   plusConnection.updateRemoteAddr(remoteAddr)
 
   return plusConnection, nil
+}
+
+// Connect to a PLUS server. laddr is the local address and remoteAddr is the 
+// remote address.
+func DialPLUS(laddr string, remoteAddr net.Addr) (*PLUSConn, error) {
+  return DialPLUSWithObserver(laddr, remoteAddr, nil)
 }
 
 // Returns this connection's current remote address.
@@ -151,6 +175,13 @@ func (conn *PLUSConn) setState(newState uint16) {
   case STATE_CLOSED:
      conn.onStateClosed()
      break
+  }
+
+  // Notify observer, if any
+  if(conn.observer != nil) {
+    if(conn.observer.onStateChanged != nil) {
+      conn.observer.onStateChanged(conn, conn.state)
+    }
   }
 }
 
@@ -332,6 +363,19 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
 
   conn.updateStateReceive(plusPacket)
 
+  // Notify observers if any
+  if(conn.observer != nil) {
+    if(plusPacket.XFlag()) {
+       if(conn.observer.onExtendedPacketReceived != nil) {
+         conn.observer.onExtendedPacketReceived(conn, plusPacket)
+       }
+    } else {
+       if(conn.observer.onBasicPacketReceived != nil) {
+         conn.observer.onBasicPacketReceived(conn, plusPacket)
+       }
+    }
+  }
+
   conn.mutex.Unlock()
 }
 
@@ -364,6 +408,9 @@ func (listener *PLUSListener) listen() {
         if(!ok) {
           if(listener.serverMode) {
             plusConnection = listener.addConnection(plusPacket.CAT())
+            if(listener.mkObserver != nil) {
+              plusConnection.SetObserver(listener.mkObserver(plusConnection))
+            }
           } else {
             /* Bogus packet with a bogus cat. Skip */
             listener.logger.Print("Bogus packet in non-servermode received")
@@ -438,6 +485,13 @@ func (conn *PLUSConn) Close() error {
   //        the same packetConn. Maybe switch to channels?
   conn.logger.Print("Close()")
   return conn.packetConn.Close()
+}
+
+func (conn *PLUSConn) SetObserver(observer *PLUSObserver) {
+  conn.mutex.RLock()
+  defer conn.mutex.RUnlock()
+
+  conn.observer = observer
 }
 
 // Returns the local address of this connection.
