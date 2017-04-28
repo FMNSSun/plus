@@ -243,6 +243,12 @@ func ulen(buffer []byte) uint16 {
   return uint16(len(buffer))
 }
 
+// Returns the header as raw bytes.
+// Should be used read-only as it is not a copy.
+func (plusPacket *PLUSPacket) Header() []byte {
+  return plusPacket.header
+}
+
 
 // Returns the packet as raw bytes. 
 // You can modify it as it is a copy.
@@ -257,7 +263,10 @@ func (plusPacket *PLUSPacket) Buffer() []byte {
 // Sets the buffer of this packet while performing a
 // check whether the buffer contains a valid PLUS packet. You
 // might prefer using the NewPLUSPacket function.
-func (plusPacket *PLUSPacket) SetBuffer(buffer []byte) error {
+func (plusPacket *PLUSPacket) SetBuffer(buffer_ []byte) error {
+  buffer := make([]byte, len(buffer_))
+  copy(buffer, buffer_)
+
   if(ulen(buffer) < BASIC_HEADER_LEN) {
     return errors.New("buffer is too small")
   }

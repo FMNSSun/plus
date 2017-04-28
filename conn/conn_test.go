@@ -252,7 +252,7 @@ func TestSendRecvDummyPacket(t *testing.T) {
     return
   }
 
-  recvBuf := []byte { 0, 0, 0, 0}
+  recvBuf := []byte { 0, 10, 0, 10}
 
   serverConn, err := server.Accept()
 
@@ -276,7 +276,7 @@ func TestSendRecvDummyPacket(t *testing.T) {
   }
 
   if(n != len(recvBuf)) {
-    t.Errorf("Expected to read %d bytes but written were %d bytes", len(recvBuf), n)
+    t.Errorf("Expected to read %d bytes but read were %d bytes", len(recvBuf), n)
     return
   }
 

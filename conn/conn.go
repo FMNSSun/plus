@@ -39,8 +39,8 @@ type PLUSConn struct {
 
 
 type PLUSInterface struct {
-  SignAndEncrypt func([]byte, []byte) []byte
-  ValidateAndDecrypt func([]byte, []byte) ([]byte, error)
+  SignAndEncrypt func(*PLUSConn, []byte, []byte) []byte
+  ValidateAndDecrypt func(*PLUSConn, []byte, []byte) ([]byte, error)
   OnStateChanged func(*PLUSConn, uint16)
   OnBasicPacketReceived func(*PLUSConn, *packet.PLUSPacket)
   OnExtendedPacketReceived func(*PLUSConn, *packet.PLUSPacket)
@@ -512,7 +512,6 @@ func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
   // TODO: Handle client IP address changes
   select {
     case plusPacket := <- conn.inChannel:
-
       n := copy(b, plusPacket.Payload())
       return n, conn.RemoteAddr(), nil
   }
@@ -544,6 +543,13 @@ func (conn *PLUSConn) sendData(b []byte) (int, error) {
 
   plusPacket := packet.NewBasicPLUSPacket(conn.defaultLFlag, conn.defaultLFlag, false,
                    conn.cat, conn.psn, conn.pse, b)
+
+  if(conn.plusInterface != nil) {
+    if(conn.plusInterface.SignAndEncrypt != nil) {
+      payload := conn.plusInterface.SignAndEncrypt(conn, plusPacket.Header(), b)
+      plusPacket.SetPayload(payload)
+    }
+  }
 
   conn.psn++
 
