@@ -14,7 +14,7 @@ type PLUSListener struct {
   newConnections chan *PLUSConn
   serverMode bool
   logger *log.Logger
-  mkObserver func(*PLUSConn) *PLUSObserver
+  mkPLUSInterface func(*PLUSConn) *PLUSInterface
 }
 
 // Implements the net.PacketConn interface but also
@@ -34,13 +34,16 @@ type PLUSConn struct {
   remoteAddr net.Addr
   logger *log.Logger
   mutex *sync.RWMutex
-  observer *PLUSObserver
+  plusInterface *PLUSInterface
 }
 
-type PLUSObserver struct {
-  onStateChanged func(*PLUSConn, uint16)
-  onBasicPacketReceived func(*PLUSConn, *packet.PLUSPacket)
-  onExtendedPacketReceived func(*PLUSConn, *packet.PLUSPacket)
+
+type PLUSInterface struct {
+  SignAndEncrypt func([]byte, []byte) []byte
+  ValidateAndDecrypt func([]byte, []byte) ([]byte, error)
+  OnStateChanged func(*PLUSConn, uint16)
+  OnBasicPacketReceived func(*PLUSConn, *packet.PLUSPacket)
+  OnExtendedPacketReceived func(*PLUSConn, *packet.PLUSPacket)
 }
 
 
@@ -80,7 +83,7 @@ func StateToString(state uint16) string {
 }
 
 // Create a PLUS server listening on laddr
-func ListenPLUSWithObserver(laddr string, mkObserver func(*PLUSConn) *PLUSObserver) (*PLUSListener, error) {
+func ListenPLUSAware(laddr string, mkPLUSInterface func(*PLUSConn) *PLUSInterface) (*PLUSListener, error) {
   packetConn, err := net.ListenPacket("udp", laddr)
   
   if(err != nil) {
@@ -93,7 +96,7 @@ func ListenPLUSWithObserver(laddr string, mkObserver func(*PLUSConn) *PLUSObserv
   plusListener.serverMode = true
   plusListener.connections = make(map[uint64]*PLUSConn)
   plusListener.newConnections = make(chan *PLUSConn)
-  plusListener.mkObserver = mkObserver
+  plusListener.mkPLUSInterface = mkPLUSInterface
 
   go plusListener.listen()
 
@@ -102,12 +105,12 @@ func ListenPLUSWithObserver(laddr string, mkObserver func(*PLUSConn) *PLUSObserv
 
 // Create a PLUS server listening on laddr
 func ListenPLUS(laddr string) (*PLUSListener, error) {
-  return ListenPLUSWithObserver(laddr, nil)
+  return ListenPLUSAware(laddr, nil)
 }
 
 // Connect to a PLUS server. laddr is the local address and remoteAddr is the 
 // remote address.
-func DialPLUSWithObserver(laddr string, remoteAddr net.Addr, mkObserver func(*PLUSConn) *PLUSObserver) (*PLUSConn, error) {
+func DialPLUSAware(laddr string, remoteAddr net.Addr, mkPLUSInterface func(*PLUSConn) *PLUSInterface) (*PLUSConn, error) {
   packetConn, err := net.ListenPacket("udp", laddr)
   
   if(err != nil) {
@@ -119,7 +122,7 @@ func DialPLUSWithObserver(laddr string, remoteAddr net.Addr, mkObserver func(*PL
   plusListener.packetConn = packetConn
   plusListener.serverMode = false
   plusListener.connections = make(map[uint64]*PLUSConn)
-  plusListener.mkObserver = mkObserver
+  plusListener.mkPLUSInterface = mkPLUSInterface
 
   go plusListener.listen()
 
@@ -141,7 +144,7 @@ func DialPLUSWithObserver(laddr string, remoteAddr net.Addr, mkObserver func(*PL
 // Connect to a PLUS server. laddr is the local address and remoteAddr is the 
 // remote address.
 func DialPLUS(laddr string, remoteAddr net.Addr) (*PLUSConn, error) {
-  return DialPLUSWithObserver(laddr, remoteAddr, nil)
+  return DialPLUSAware(laddr, remoteAddr, nil)
 }
 
 // Returns this connection's current remote address.
@@ -178,9 +181,9 @@ func (conn *PLUSConn) setState(newState uint16) {
   }
 
   // Notify observer, if any
-  if(conn.observer != nil) {
-    if(conn.observer.onStateChanged != nil) {
-      conn.observer.onStateChanged(conn, conn.state)
+  if(conn.plusInterface != nil) {
+    if(conn.plusInterface.OnStateChanged != nil) {
+      conn.plusInterface.OnStateChanged(conn, conn.state)
     }
   }
 }
@@ -364,14 +367,14 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
   conn.updateStateReceive(plusPacket)
 
   // Notify observers if any
-  if(conn.observer != nil) {
+  if(conn.plusInterface != nil) {
     if(plusPacket.XFlag()) {
-       if(conn.observer.onExtendedPacketReceived != nil) {
-         conn.observer.onExtendedPacketReceived(conn, plusPacket)
+       if(conn.plusInterface.OnExtendedPacketReceived != nil) {
+         conn.plusInterface.OnExtendedPacketReceived(conn, plusPacket)
        }
     } else {
-       if(conn.observer.onBasicPacketReceived != nil) {
-         conn.observer.onBasicPacketReceived(conn, plusPacket)
+       if(conn.plusInterface.OnBasicPacketReceived != nil) {
+         conn.plusInterface.OnBasicPacketReceived(conn, plusPacket)
        }
     }
   }
@@ -408,8 +411,8 @@ func (listener *PLUSListener) listen() {
         if(!ok) {
           if(listener.serverMode) {
             plusConnection = listener.addConnection(plusPacket.CAT())
-            if(listener.mkObserver != nil) {
-              plusConnection.SetObserver(listener.mkObserver(plusConnection))
+            if(listener.mkPLUSInterface != nil) {
+              plusConnection.SetObserver(listener.mkPLUSInterface(plusConnection))
             }
           } else {
             /* Bogus packet with a bogus cat. Skip */
@@ -487,11 +490,11 @@ func (conn *PLUSConn) Close() error {
   return conn.packetConn.Close()
 }
 
-func (conn *PLUSConn) SetObserver(observer *PLUSObserver) {
+func (conn *PLUSConn) SetObserver(observer *PLUSInterface) {
   conn.mutex.RLock()
   defer conn.mutex.RUnlock()
 
-  conn.observer = observer
+  conn.plusInterface = observer
 }
 
 // Returns the local address of this connection.

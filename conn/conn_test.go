@@ -20,6 +20,7 @@ func setupServer(t *testing.T) *PLUSListener {
 
 func teardownServer(t *testing.T, listener *PLUSListener) {
   listener.Close()
+  time.Sleep(1000 * time.Millisecond)
 }
 
 func setupClient(t *testing.T) *PLUSConn {
@@ -42,6 +43,7 @@ func setupClient(t *testing.T) *PLUSConn {
 
 func teardownClient(t *testing.T, conn *PLUSConn) {
   conn.Close()
+  time.Sleep(1000 * time.Millisecond)
 }
 
 func TestCreateListener(t *testing.T) {
@@ -149,7 +151,6 @@ func TestPingPong(t *testing.T) {
 
   server := setupServer(t)
   client := setupClient(t)
-  time.Sleep(1000 * time.Millisecond)
 
   defer teardownServer(t, server)
   defer teardownClient(t, client)
@@ -223,7 +224,7 @@ func TestSendRecvDummyPacket(t *testing.T) {
   server := setupServer(t)
   client := setupClient(t)
 
-  time.Sleep(1000 * time.Millisecond)
+
 
   defer teardownServer(t, server)
   defer teardownClient(t, client)
