@@ -366,6 +366,8 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
   conn.pse = plusPacket.PSN()
 
   if(conn.state != STATE_CLOSED) {
+    // TODO: make this non-blocking. If we can't write to the channel
+    //       immediately we should just drop the packet.
     conn.inChannel <- plusPacket
   }
 
