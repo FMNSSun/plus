@@ -260,21 +260,24 @@ func (conn *PLUSConn) updateStateSend(plusPacket *packet.PLUSPacket) {
 // Returns true if this connection is closed.
 func (conn *PLUSConn) IsClosed() bool {
   conn.mutex.RLock()
+  defer conn.mutex.RUnlock()
+
   closed := false
   if(conn.state == STATE_CLOSED) {
     closed = true
   } else {
     closed = false
   }
-  conn.mutex.RUnlock()
+
   return closed
 }
 
 // Returns the CAT
 func (conn *PLUSConn) CAT() uint64 {
-  conn.mutex.Lock()
+  conn.mutex.RLock()
+  defer conn.mutex.RUnlock()
+
   cat := conn.cat
-  conn.mutex.Unlock()
   return cat
 }
 
@@ -282,6 +285,7 @@ func (conn *PLUSConn) CAT() uint64 {
 func (conn *PLUSConn) SendPacket(plusPacket *packet.PLUSPacket) error {
   conn.mutex.Lock()
   defer conn.mutex.Unlock()
+
   return conn.sendPacket(plusPacket)
 }
 
@@ -342,6 +346,7 @@ func (conn *PLUSConn) updateRemoteAddr(remoteAddr net.Addr) {
 // that is read by the ReadFrom method of this connection.
 func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteAddr net.Addr)  {
   conn.mutex.Lock()
+  defer conn.mutex.Unlock()
 
   conn.logger.Print(fmt.Sprintf("Received packet PSN := %d, PSE := %d", plusPacket.PSN(), plusPacket.PSE()))
   conn.logger.Print(plusPacket.Buffer())
@@ -378,8 +383,6 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
        }
     }
   }
-
-  conn.mutex.Unlock()
 }
 
 // This listens on the internal packet connection for new packets, tries to
@@ -450,7 +453,7 @@ func (listener *PLUSListener) addConnection(cat uint64) (*PLUSConn)  {
     plusConnection.state = STATE_ZERO
   }
 
-  plusConnection.inChannel = make(chan *packet.PLUSPacket)
+  plusConnection.inChannel = make(chan *packet.PLUSPacket, 10)
   plusConnection.cat = cat
   plusConnection.defaultLFlag = false
   plusConnection.defaultRFlag = false
@@ -510,8 +513,12 @@ func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
   //       wrapper around the channel.
 
   // TODO: Handle client IP address changes
+  conn.mutex.RLock()
+  ch := conn.inChannel
+  conn.mutex.RUnlock()
+
   select {
-    case plusPacket := <- conn.inChannel:
+    case plusPacket := <- ch:
       n := copy(b, plusPacket.Payload())
       return n, conn.RemoteAddr(), nil
   }
@@ -527,8 +534,11 @@ func (conn *PLUSConn) Read(b []byte) (int, error) {
 
 // Read a raw packet
 func (conn *PLUSConn) ReadPacket() (*packet.PLUSPacket, error) {
+  conn.mutex.RLock()
+  ch := conn.inChannel
+  conn.mutex.RUnlock()
   select {
-    case plusPacket := <- conn.inChannel:
+    case plusPacket := <- ch:
 
       return plusPacket, nil
   }
