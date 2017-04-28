@@ -13,8 +13,8 @@ import "encoding/binary"
 //
 // See the plus-spec draft for more. Or ask brian :D.
 type PLUSPacket struct {
-  buffer []byte
-  headerLen uint16
+  header []byte
+  payload[] byte
 }
 
 // BASIC_HEADER_LEN is the length of the basic header.
@@ -28,97 +28,97 @@ const MAGIC uint32 = 0xd8007ff
 
 // Returns value of the L flag
 func (plusPacket *PLUSPacket) LFlag() bool {
-  return toBool((plusPacket.buffer[3] >> 3) & 0x01)
+  return toBool((plusPacket.header[3] >> 3) & 0x01)
 }
 
 
 // Returns value of the R flag
 func (plusPacket *PLUSPacket) RFlag() bool {
-  return toBool((plusPacket.buffer[3] >> 2) & 0x01)
+  return toBool((plusPacket.header[3] >> 2) & 0x01)
 }
 
 
 // Returns value of the S flag
 func (plusPacket *PLUSPacket) SFlag() bool {
-  return toBool((plusPacket.buffer[3] >> 1) & 0x01)
+  return toBool((plusPacket.header[3] >> 1) & 0x01)
 }
 
 
 // Returns value of the X flag
 func (plusPacket *PLUSPacket) XFlag() bool {
-  return toBool((plusPacket.buffer[3] >> 0) & 0x01)
+  return toBool((plusPacket.header[3] >> 0) & 0x01)
 }
 
 
 // Sets the L flag to v
 func (plusPacket *PLUSPacket) SetLFlag(v bool) {
-  plusPacket.buffer[3] |= toByte(v) << 3
+  plusPacket.header[3] |= toByte(v) << 3
 }
 
 
 // Sets the R flag to v
 func (plusPacket *PLUSPacket) SetRFlag(v bool) {
-  plusPacket.buffer[3] |= toByte(v) << 2
+  plusPacket.header[3] |= toByte(v) << 2
 }
 
 
 // Sets the S flag to v
 func (plusPacket *PLUSPacket) SetSFlag(v bool) {
-  plusPacket.buffer[3] |= toByte(v) << 1
+  plusPacket.header[3] |= toByte(v) << 1
 }
 
 
 // Sets the X flag to v
 func (plusPacket *PLUSPacket) setXFlag(v bool) {
-  plusPacket.buffer[3] |= toByte(v)
+  plusPacket.header[3] |= toByte(v)
 }
 
 
 // Returns the CAT
 func (plusPacket *PLUSPacket) CAT() uint64 {
-  return binary.BigEndian.Uint64(plusPacket.buffer[4:])
+  return binary.BigEndian.Uint64(plusPacket.header[4:])
 }
 
 
 // Returns the PSN
 func (plusPacket *PLUSPacket) PSN() uint32 {
-  return binary.BigEndian.Uint32(plusPacket.buffer[12:])
+  return binary.BigEndian.Uint32(plusPacket.header[12:])
 }
 
 
 // Returns the PSE
 func (plusPacket *PLUSPacket) PSE() uint32 {
-  return binary.BigEndian.Uint32(plusPacket.buffer[16:])
+  return binary.BigEndian.Uint32(plusPacket.header[16:])
 }
 
 
 // Sets the CAT
 func (plusPacket *PLUSPacket) SetCAT(cat uint64) {
-  binary.BigEndian.PutUint64(plusPacket.buffer[4:], cat)
+  binary.BigEndian.PutUint64(plusPacket.header[4:], cat)
 }
 
 
 // Sets the PSN
 func (plusPacket *PLUSPacket) SetPSN(psn uint32) {
-  binary.BigEndian.PutUint32(plusPacket.buffer[12:], psn)
+  binary.BigEndian.PutUint32(plusPacket.header[12:], psn)
 }
 
 
 // Sets the PSE
 func (plusPacket *PLUSPacket) SetPSE(pse uint32) {
-  binary.BigEndian.PutUint32(plusPacket.buffer[16:], pse)
+  binary.BigEndian.PutUint32(plusPacket.header[16:], pse)
 }
 
 
 // Returns the payload
 func (plusPacket *PLUSPacket) Payload() []byte {
-  return plusPacket.buffer[plusPacket.HeaderLen():]
+  return plusPacket.payload
 }
 
 
 // Sets the payload
 func (plusPacket *PLUSPacket) SetPayload(payload []byte) {
-  copy(plusPacket.buffer[plusPacket.HeaderLen():], payload)
+  plusPacket.payload = payload
 }
 
 
@@ -134,11 +134,11 @@ func (plusPacket *PLUSPacket) PCFType() (uint16, error) {
   }
 
   // PCF Type = 0x00 means additional byte
-  if(plusPacket.buffer[20] == 0x00) {
-    return uint16(plusPacket.buffer[21]) << 8, nil
+  if(plusPacket.header[20] == 0x00) {
+    return uint16(plusPacket.header[21]) << 8, nil
   }
 
-  return uint16(plusPacket.buffer[20]), nil
+  return uint16(plusPacket.header[20]), nil
 }
 
 
@@ -152,12 +152,12 @@ func (plusPacket *PLUSPacket) GetPCFLenIntegrityPos() (int, error) {
 
   // PCF type 0x00 -> additional PCF type byte causing PCF len to be at byte
   // 22
-  if(plusPacket.buffer[20] == 0x00) {
+  if(plusPacket.header[20] == 0x00) {
     return 22, nil
   }
 
   // PCF type 0xFF -> no PCF Len/PCF I
-  if(plusPacket.buffer[20] == 0xFF) {
+  if(plusPacket.header[20] == 0xFF) {
     return 0, errors.New("No PCF Len/PCF Integrity present due to PCF Type = 0xFF.")
   }
 
@@ -175,17 +175,17 @@ func (plusPacket *PLUSPacket) PCFLen() (uint8, error) {
 
   var value byte
 
-  if(plusPacket.buffer[20] == 0x00) { //2 byte PCF type
+  if(plusPacket.header[20] == 0x00) { //2 byte PCF type
 
-    value = plusPacket.buffer[22]
+    value = plusPacket.header[22]
 
-  } else if(plusPacket.buffer[20] == 0xFF) { //no PCF Len/PCF I
+  } else if(plusPacket.header[20] == 0xFF) { //no PCF Len/PCF I
 
     return 0, errors.New("No PCF Len present due to PCF Type = 0xFF.")
 
   } else {
 
-    value = plusPacket.buffer[21]
+    value = plusPacket.header[21]
 
   }
 
@@ -202,17 +202,17 @@ func (plusPacket *PLUSPacket) PCFIntegrity() (uint8, error) {
 
   var value byte
 
-  if(plusPacket.buffer[20] == 0x00) { //2 byte PCF type
+  if(plusPacket.header[20] == 0x00) { //2 byte PCF type
 
-    value = plusPacket.buffer[22]
+    value = plusPacket.header[22]
 
-  } else if(plusPacket.buffer[20] == 0xFF) { //no PCF Len/PCF I
+  } else if(plusPacket.header[20] == 0xFF) { //no PCF Len/PCF I
 
     return 0, errors.New("No PCF Integrity present due to PCF Type = 0xFF")
 
   } else {
 
-    value = plusPacket.buffer[21]
+    value = plusPacket.header[21]
 
   }
 
@@ -222,7 +222,7 @@ func (plusPacket *PLUSPacket) PCFIntegrity() (uint8, error) {
 
 // Returns the size of the header
 func (plusPacket *PLUSPacket) HeaderLen() uint16 {
-  return plusPacket.headerLen
+  return ulen(plusPacket.header)
 }
 
 
@@ -244,10 +244,13 @@ func ulen(buffer []byte) uint16 {
 }
 
 
-// Returns the packet as raw bytes. You should
-// only use this buffer read-only.
+// Returns the packet as raw bytes. 
+// You can modify it as it is a copy.
 func (plusPacket *PLUSPacket) Buffer() []byte {
-  return plusPacket.buffer
+  buffer := make([]byte, len(plusPacket.payload) + len(plusPacket.header))
+  copy(buffer, plusPacket.header)
+  copy(buffer[len(plusPacket.header):], plusPacket.payload)
+  return buffer
 }
 
 
@@ -270,8 +273,8 @@ func (plusPacket *PLUSPacket) SetBuffer(buffer []byte) error {
 
   // If it's a basic header we're done
   if(xFlag == 0) {
-    plusPacket.buffer = buffer
-    plusPacket.headerLen = BASIC_HEADER_LEN
+    plusPacket.header = buffer[:BASIC_HEADER_LEN]
+    plusPacket.payload = buffer[BASIC_HEADER_LEN:]
     return nil
   }
 
@@ -321,8 +324,8 @@ func (plusPacket *PLUSPacket) SetBuffer(buffer []byte) error {
     buffer[pcfLenIPos] = pcfLen << 2 | pcfI
   }
 
-  plusPacket.headerLen = expectedLength
-  plusPacket.buffer = buffer
+  plusPacket.header = buffer[:expectedLength]
+  plusPacket.payload = buffer[expectedLength:]
   return nil
 }
 
@@ -351,9 +354,9 @@ func NewBasicPLUSPacket(
 
   var plusPacket PLUSPacket
 
-  plusPacket.buffer = make([]byte, BASIC_HEADER_LEN + ulen(payload))
+  plusPacket.header = make([]byte, BASIC_HEADER_LEN)
   
-  binary.BigEndian.PutUint32(plusPacket.buffer, MAGIC << 4)
+  binary.BigEndian.PutUint32(plusPacket.header, MAGIC << 4)
 
   plusPacket.SetLFlag(lFlag)
   plusPacket.SetRFlag(rFlag)
@@ -361,9 +364,6 @@ func NewBasicPLUSPacket(
   plusPacket.SetCAT(cat)
   plusPacket.SetPSN(psn)
   plusPacket.SetPSE(pse)
-
-  
-  plusPacket.headerLen = BASIC_HEADER_LEN
 
   plusPacket.SetPayload(payload)
 
@@ -405,9 +405,9 @@ func NewExtendedPLUSPacket(
     length += ulen(pcfValue)
   }
 
-  plusPacket.buffer = make([]byte, length + ulen(payload))
+  plusPacket.header = make([]byte, length)
   
-  binary.BigEndian.PutUint32(plusPacket.buffer, (MAGIC << 4) | 1)
+  binary.BigEndian.PutUint32(plusPacket.header, (MAGIC << 4) | 1)
 
   plusPacket.SetLFlag(lFlag)
   plusPacket.SetRFlag(rFlag)
@@ -419,24 +419,24 @@ func NewExtendedPLUSPacket(
   ofs := uint16(0)
 
   if((pcfType & 0x00FF) == 0) {
-    plusPacket.buffer[BASIC_HEADER_LEN + ofs] = 0x00
+    plusPacket.header[BASIC_HEADER_LEN + ofs] = 0x00
     ofs++
-    plusPacket.buffer[BASIC_HEADER_LEN + ofs] = uint8(pcfType >> 8)
+    plusPacket.header[BASIC_HEADER_LEN + ofs] = uint8(pcfType >> 8)
   }
 
   if(pcfType != 0xFF) {
-    plusPacket.buffer[BASIC_HEADER_LEN + ofs] = uint8(pcfType & 0xFF)
+    plusPacket.header[BASIC_HEADER_LEN + ofs] = uint8(pcfType & 0xFF)
     ofs++
     if(ulen(pcfValue) == 0) {
       pcfIntegrity = 0 //spec says if len is 0 integrity is unspecified and must be set to zero
     }
     fmt.Println(pcfIntegrity)
-    plusPacket.buffer[BASIC_HEADER_LEN + ofs] = (uint8(ulen(pcfValue)) << 2) | pcfIntegrity
+    plusPacket.header[BASIC_HEADER_LEN + ofs] = (uint8(ulen(pcfValue)) << 2) | pcfIntegrity
   }
 
   ofs++
 
-  copy(plusPacket.buffer[(BASIC_HEADER_LEN + ofs):], pcfValue)
+  copy(plusPacket.header[(BASIC_HEADER_LEN + ofs):], pcfValue)
 
   ofs += ulen(pcfValue)
 
@@ -444,7 +444,6 @@ func NewExtendedPLUSPacket(
     return nil, fmt.Errorf("BUG %d, %d", ofs, length)
   }
   
-  plusPacket.headerLen = length
 
   plusPacket.SetPayload(payload)
 
