@@ -8,6 +8,20 @@ import "log"
 import "os"
 import "sync"
 
+// Utility type to feed back validation errors
+// to ReadFrom
+type inPacket struct {
+  packet *packet.PLUSPacket
+  err error
+}
+
+func newInPacket(packet *packet.PLUSPacket, err error) inPacket {
+  var ip inPacket
+  ip.packet = packet
+  ip.err = err
+  return ip
+}
+
 type PLUSListener struct {
   packetConn net.PacketConn
   connections map[uint64]*PLUSConn
@@ -22,7 +36,7 @@ type PLUSListener struct {
 // to be notified about state changes and receiving
 // of packets.
 type PLUSConn struct {
-  inChannel chan *packet.PLUSPacket
+  inChannel chan inPacket
   outChannel chan *packet.PLUSPacket
   packetConn net.PacketConn
   state uint16
@@ -35,6 +49,7 @@ type PLUSConn struct {
   logger *log.Logger
   mutex *sync.RWMutex
   plusInterface *PLUSInterface
+  dropInvalidPackets bool
 }
 
 
@@ -42,8 +57,8 @@ type PLUSInterface struct {
   SignAndEncrypt func(*PLUSConn, []byte, []byte) ([]byte, error)
   ValidateAndDecrypt func(*PLUSConn, []byte, []byte) ([]byte, error)
   OnStateChanged func(*PLUSConn, uint16)
-  OnBasicPacketReceived func(*PLUSConn, *packet.PLUSPacket)
-  OnExtendedPacketReceived func(*PLUSConn, *packet.PLUSPacket)
+  OnBasicPacketReceived func(*PLUSConn, *packet.PLUSPacket, error)
+  OnExtendedPacketReceived func(*PLUSConn, *packet.PLUSPacket, error)
 }
 
 
@@ -285,10 +300,23 @@ func (conn *PLUSConn) CAT() uint64 {
   return cat
 }
 
-// Send a raw packet. Does not do any signing or encryption.
+// Send a raw packet (payload will be signed and encrypted)
 func (conn *PLUSConn) SendPacket(plusPacket *packet.PLUSPacket) error {
   conn.mutex.Lock()
   defer conn.mutex.Unlock()
+
+  // Encrypt if required
+  if(conn.plusInterface != nil) {
+    if(conn.plusInterface.SignAndEncrypt != nil) {
+      payload, err := conn.plusInterface.SignAndEncrypt(conn, plusPacket.Header(), plusPacket.Payload())
+
+      if(err != nil) {
+        return err
+      }
+
+      plusPacket.SetPayload(payload)
+    }
+  }
 
   return conn.sendPacket(plusPacket)
 }
@@ -355,6 +383,29 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
   conn.logger.Print(fmt.Sprintf("Received packet PSN := %d, PSE := %d", plusPacket.PSN(), plusPacket.PSE()))
   conn.logger.Print(plusPacket.Buffer())
 
+  if(conn.state == STATE_CLOSED) {
+    conn.logger.Print("Connection is in STATE_CLOSED")
+    return //don't accept packets if the connection is closed
+  }
+
+  // Decrypt and validate
+  if(conn.plusInterface != nil) {
+    if(conn.plusInterface.ValidateAndDecrypt != nil) {
+      payload, err := conn.plusInterface.ValidateAndDecrypt(conn, plusPacket.Header(), plusPacket.Payload())
+
+      if(err != nil) {
+        // If the upper layer is interested in invalid packets...
+        if(!conn.dropInvalidPackets) {
+          conn.inChannel <- newInPacket(plusPacket, err)
+          conn.notifyObservers(plusPacket, err)
+        }
+        return
+      }
+
+      plusPacket.SetPayload(payload)
+    }
+  }
+
   packetCAT := plusPacket.CAT()
 
   if(packetCAT != conn.cat) {
@@ -369,23 +420,25 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
   // Update PSE
   conn.pse = plusPacket.PSN()
 
-  if(conn.state != STATE_CLOSED) {
-    // TODO: make this non-blocking. If we can't write to the channel
-    //       immediately we should just drop the packet.
-    conn.inChannel <- plusPacket
-  }
+  // TODO: make this non-blocking. If we can't write to the channel
+  //       immediately we should just drop the packet.
+  conn.inChannel <- newInPacket(plusPacket, nil)
 
   conn.updateStateReceive(plusPacket)
 
+  conn.notifyObservers(plusPacket, nil)
+}
+
+func (conn *PLUSConn) notifyObservers(plusPacket *packet.PLUSPacket, err error) {
   // Notify observers if any
   if(conn.plusInterface != nil) {
     if(plusPacket.XFlag()) {
        if(conn.plusInterface.OnExtendedPacketReceived != nil) {
-         conn.plusInterface.OnExtendedPacketReceived(conn, plusPacket)
+         conn.plusInterface.OnExtendedPacketReceived(conn, plusPacket, err)
        }
     } else {
        if(conn.plusInterface.OnBasicPacketReceived != nil) {
-         conn.plusInterface.OnBasicPacketReceived(conn, plusPacket)
+         conn.plusInterface.OnBasicPacketReceived(conn, plusPacket, err)
        }
     }
   }
@@ -459,7 +512,7 @@ func (listener *PLUSListener) addConnection(cat uint64) (*PLUSConn)  {
     plusConnection.state = STATE_ZERO
   }
 
-  plusConnection.inChannel = make(chan *packet.PLUSPacket, 10)
+  plusConnection.inChannel = make(chan inPacket, 10)
   plusConnection.cat = cat
   plusConnection.defaultLFlag = false
   plusConnection.defaultRFlag = false
@@ -467,6 +520,7 @@ func (listener *PLUSListener) addConnection(cat uint64) (*PLUSConn)  {
   plusConnection.pse = 0
   plusConnection.psn = 1
   plusConnection.logger = log.New(os.Stdout, fmt.Sprintf("Connection %d: ", cat), log.Lshortfile)
+  plusConnection.dropInvalidPackets = true
 
   listener.connections[cat] = &plusConnection
 
@@ -526,21 +580,6 @@ func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
     return 0, nil, nil
   }
 
-  // Decrypt if required
-  if(conn.plusInterface != nil) {
-    if(conn.plusInterface.ValidateAndDecrypt != nil) {
-      payload, err := conn.plusInterface.ValidateAndDecrypt(conn, plusPacket.Header(), plusPacket.Payload())
-
-      if(err != nil) {
-        return 0, nil, err
-      }
-
-      n := copy(b, payload)
-
-      return n, conn.RemoteAddr(), nil
-    }
-  }
-
   n := copy(b, plusPacket.Payload())
   return n, conn.RemoteAddr(), nil
 }
@@ -551,15 +590,19 @@ func (conn *PLUSConn) Read(b []byte) (int, error) {
   return n, err
 }
 
-// Read a raw packet. Does not do any validation or decryption!
+// Read a raw packet (validated and payload decrypted)
 func (conn *PLUSConn) ReadPacket() (*packet.PLUSPacket, error) {
   conn.mutex.RLock()
   ch := conn.inChannel
   conn.mutex.RUnlock()
   select {
-    case plusPacket := <- ch:
+    case ip := <- ch:
 
-      return plusPacket, nil
+      if(ip.err != nil) {
+        return nil, ip.err
+      }
+
+      return ip.packet, nil
   }
 }
 
