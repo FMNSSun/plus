@@ -577,7 +577,7 @@ func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
   plusPacket, err := conn.ReadPacket()
 
   if(err != nil) {
-    return 0, nil, nil
+    return 0, nil, err
   }
 
   n := copy(b, plusPacket.Payload())
