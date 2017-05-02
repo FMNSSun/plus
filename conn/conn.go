@@ -305,19 +305,6 @@ func (conn *PLUSConn) SendPacket(plusPacket *packet.PLUSPacket) error {
   conn.mutex.Lock()
   defer conn.mutex.Unlock()
 
-  // Encrypt if required
-  if(conn.plusInterface != nil) {
-    if(conn.plusInterface.SignAndEncrypt != nil) {
-      payload, err := conn.plusInterface.SignAndEncrypt(conn, plusPacket.Header(), plusPacket.Payload())
-
-      if(err != nil) {
-        return err
-      }
-
-      plusPacket.SetPayload(payload)
-    }
-  }
-
   return conn.sendPacket(plusPacket)
 }
 
@@ -326,6 +313,12 @@ func (conn *PLUSConn) SendPacket(plusPacket *packet.PLUSPacket) error {
 func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket) error {
   if(conn.state == STATE_CLOSED) {
     return fmt.Errorf("Connection is closed!")
+  }
+
+  _, err := conn.encrypt(plusPacket)
+
+  if(err != nil) {
+    return err
   }
 
   conn.logger.Print(fmt.Sprintf("sendPacket: Sending packet PSN := %d, PSE := %d", plusPacket.PSN(), plusPacket.PSE()))
@@ -458,14 +451,14 @@ func (listener *PLUSListener) listen() {
     listener.logger.Print("Read.")
 
     if(err != nil) {
-      // FIXME: What the f*ck do we do here?
+      // TODO: Close connections/signal close
       listener.logger.Printf("Reading from packetConn failed: %s", err.Error())
       return
     } else {
       plusPacket, err := packet.NewPLUSPacket(buffer[:n])
 
       if(err != nil) {
-        // FIXME: What the f*ck do we do here?
+        // Drop packets that aren't PLUS packets
         listener.logger.Print("Parsing packet failed.")
       } else {
 
@@ -478,7 +471,7 @@ func (listener *PLUSListener) listen() {
               plusConnection.SetObserver(listener.mkPLUSInterface(plusConnection))
             }
           } else {
-            /* Bogus packet with a bogus cat. Skip */
+            // Invalid CAT. Drop packet. 
             listener.logger.Print("Bogus packet in non-servermode received")
             continue
           }
@@ -607,6 +600,23 @@ func (conn *PLUSConn) ReadPacket() (*packet.PLUSPacket, error) {
   }
 }
 
+func (conn *PLUSConn) encrypt(plusPacket *packet.PLUSPacket) (int, error) {
+  if(conn.plusInterface != nil) {
+    if(conn.plusInterface.SignAndEncrypt != nil) {
+      payload, err := conn.plusInterface.SignAndEncrypt(conn, plusPacket.Header(), plusPacket.Payload())
+
+      if(err != nil) {
+        return 0, err
+      }
+
+      plusPacket.SetPayload(payload)
+
+      return len(payload), nil
+    }
+  }
+  return len(plusPacket.Payload()), nil
+}
+
 // Sends data in a PLUS packet with a basic header.
 // This essentially creates the PLUS packet and then calls
 // sendPacket.
@@ -616,19 +626,6 @@ func (conn *PLUSConn) sendData(b []byte) (int, error) {
 
   plusPacket := packet.NewBasicPLUSPacket(conn.defaultLFlag, conn.defaultLFlag, false,
                    conn.cat, conn.psn, conn.pse, b)
-
-  // Encrypt if required
-  if(conn.plusInterface != nil) {
-    if(conn.plusInterface.SignAndEncrypt != nil) {
-      payload, err := conn.plusInterface.SignAndEncrypt(conn, plusPacket.Header(), b)
-
-      if(err != nil) {
-        return 0, err
-      }
-
-      plusPacket.SetPayload(payload)
-    }
-  }
 
   conn.psn++
 
