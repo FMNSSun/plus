@@ -23,6 +23,13 @@ func dummyProtocol_ValidateAndDecrypt(conn *PLUSConn, header []byte, data []byte
   return decrypted, nil
 }
 
+func dummyProtocol_mkPLUSInterface(conn *PLUSConn) *PLUSInterface {
+  var plusInterface PLUSInterface;
+  plusInterface.SignAndEncrypt = dummyProtocol_SignAndEncrypt
+  plusInterface.ValidateAndDecrypt = dummyProtocol_ValidateAndDecrypt
+  return &plusInterface
+}
+
 func dummyProtocol_SetupServer(t *testing.T) *PLUSListener {
   listener, err := ListenPLUSAware("127.0.0.1:15000", dummyProtocol_mkPLUSInterface)
 
@@ -32,13 +39,6 @@ func dummyProtocol_SetupServer(t *testing.T) *PLUSListener {
   }
 
   return listener
-}
-
-func dummyProtocol_mkPLUSInterface(conn *PLUSConn) *PLUSInterface {
-  var plusInterface PLUSInterface;
-  plusInterface.SignAndEncrypt = dummyProtocol_SignAndEncrypt
-  plusInterface.ValidateAndDecrypt = dummyProtocol_ValidateAndDecrypt
-  return &plusInterface
 }
 
 func dummyProtocol_SetupClient(t *testing.T) *PLUSConn {
