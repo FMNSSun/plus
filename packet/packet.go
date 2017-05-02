@@ -342,6 +342,7 @@ func (plusPacket *PLUSPacket) SetBuffer(buffer_ []byte) error {
 // Construct a plus packet from buffer.
 // This will perform a check if this is a valid
 // PLUS packet (in the correct wire format).
+// The buffer will be copied.
 func NewPLUSPacket(buffer []byte) (*PLUSPacket, error) {
   var plusPacket PLUSPacket
   err := plusPacket.SetBuffer(buffer)

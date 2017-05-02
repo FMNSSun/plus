@@ -450,6 +450,7 @@ func (conn *PLUSConn) notifyObservers(plusPacket *packet.PLUSPacket, err error) 
 func (listener *PLUSListener) listen() {
   listener.logger.Print(fmt.Sprintf("listen() on %s",listener.packetConn.LocalAddr().String()))
 
+  // We can re-use this buffer because PLUSPacket copies the buffer
   buffer := make([]byte, maxPacketSize)
   for {
     listener.logger.Print("listen: ReadFrom")
