@@ -39,7 +39,7 @@ type PLUSConn struct {
 
 
 type PLUSInterface struct {
-  SignAndEncrypt func(*PLUSConn, []byte, []byte) []byte
+  SignAndEncrypt func(*PLUSConn, []byte, []byte) ([]byte, error)
   ValidateAndDecrypt func(*PLUSConn, []byte, []byte) ([]byte, error)
   OnStateChanged func(*PLUSConn, uint16)
   OnBasicPacketReceived func(*PLUSConn, *packet.PLUSPacket)
@@ -124,7 +124,6 @@ func DialPLUSAware(laddr string, remoteAddr net.Addr, mkPLUSInterface func(*PLUS
   plusListener.connections = make(map[uint64]*PLUSConn)
   plusListener.mkPLUSInterface = mkPLUSInterface
 
-  go plusListener.listen()
 
   // FIXME: Make this random. 
   randomCAT := uint64(4) //totally random for now
@@ -136,7 +135,12 @@ func DialPLUSAware(laddr string, remoteAddr net.Addr, mkPLUSInterface func(*PLUS
     return nil, fmt.Errorf("Connection with CAT %d does not exist. BUG!", randomCAT)
   }
 
+  if(plusListener.mkPLUSInterface != nil) {
+    plusConnection.plusInterface = plusListener.mkPLUSInterface(plusConnection)
+  }
   plusConnection.updateRemoteAddr(remoteAddr)
+
+  go plusListener.listen()
 
   return plusConnection, nil
 }
@@ -281,7 +285,7 @@ func (conn *PLUSConn) CAT() uint64 {
   return cat
 }
 
-// Send a raw packet. 
+// Send a raw packet. Does not do any signing or encryption.
 func (conn *PLUSConn) SendPacket(plusPacket *packet.PLUSPacket) error {
   conn.mutex.Lock()
   defer conn.mutex.Unlock()
@@ -515,17 +519,30 @@ func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
   //       wrapper around the channel.
 
   // TODO: Handle client IP address changes
-  conn.mutex.RLock()
-  ch := conn.inChannel
-  conn.mutex.RUnlock()
+  
+  plusPacket, err := conn.ReadPacket()
 
-  select {
-    case plusPacket := <- ch:
-      n := copy(b, plusPacket.Payload())
-      return n, conn.RemoteAddr(), nil
+  if(err != nil) {
+    return 0, nil, nil
   }
 
-  return 0, nil, nil
+  // Decrypt if required
+  if(conn.plusInterface != nil) {
+    if(conn.plusInterface.ValidateAndDecrypt != nil) {
+      payload, err := conn.plusInterface.ValidateAndDecrypt(conn, plusPacket.Header(), plusPacket.Payload())
+
+      if(err != nil) {
+        return 0, nil, err
+      }
+
+      n := copy(b, payload)
+
+      return n, conn.RemoteAddr(), nil
+    }
+  }
+
+  n := copy(b, plusPacket.Payload())
+  return n, conn.RemoteAddr(), nil
 }
 
 // similar to ReadFrom but does not return an address
@@ -534,7 +551,7 @@ func (conn *PLUSConn) Read(b []byte) (int, error) {
   return n, err
 }
 
-// Read a raw packet
+// Read a raw packet. Does not do any validation or decryption!
 func (conn *PLUSConn) ReadPacket() (*packet.PLUSPacket, error) {
   conn.mutex.RLock()
   ch := conn.inChannel
@@ -556,9 +573,15 @@ func (conn *PLUSConn) sendData(b []byte) (int, error) {
   plusPacket := packet.NewBasicPLUSPacket(conn.defaultLFlag, conn.defaultLFlag, false,
                    conn.cat, conn.psn, conn.pse, b)
 
+  // Encrypt if required
   if(conn.plusInterface != nil) {
     if(conn.plusInterface.SignAndEncrypt != nil) {
-      payload := conn.plusInterface.SignAndEncrypt(conn, plusPacket.Header(), b)
+      payload, err := conn.plusInterface.SignAndEncrypt(conn, plusPacket.Header(), b)
+
+      if(err != nil) {
+        return 0, err
+      }
+
       plusPacket.SetPayload(payload)
     }
   }

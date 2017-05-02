@@ -1,5 +1,8 @@
 package conn
 
+// About:
+//  Some general very basic dummy tests.
+
 import "testing"
 import "net"
 import "os"
