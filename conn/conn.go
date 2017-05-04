@@ -8,203 +8,120 @@ import "log"
 import "os"
 import "sync"
 
-// Utility type to feed back validation errors
-// to ReadFrom
-type inPacket struct {
-  packet *packet.PLUSPacket
-  err error
-}
-
-func newInPacket(packet *packet.PLUSPacket, err error) inPacket {
-  var ip inPacket
-  ip.packet = packet
-  ip.err = err
-  return ip
-}
-
-type PLUSListener struct {
-  packetConn net.PacketConn
-  connections map[uint64]*PLUSConn
-  newConnections chan *PLUSConn
-  serverMode bool
-  logger *log.Logger
-  mkPLUSInterface func(*PLUSConn) *PLUSInterface
-}
-
 // Implements the net.PacketConn interface but also
 // allows raw access and allows to register an observer
 // to be notified about state changes and receiving
 // of packets.
 type PLUSConn struct {
-  inChannel chan inPacket
-  outChannel chan *packet.PLUSPacket
-  packetConn net.PacketConn
-  state uint16
-  cat uint64
-  defaultLFlag bool
-  defaultRFlag bool
-  pse uint32
-  psn uint32
-  remoteAddr net.Addr
-  logger *log.Logger
-  mutex *sync.RWMutex
-  plusInterface *PLUSInterface
-  dropInvalidPackets bool
+	inChannel          chan inPacket
+	outChannel         chan *packet.PLUSPacket
+	packetConn         net.PacketConn
+	state              uint16
+	cat                uint64
+	defaultLFlag       bool
+	defaultRFlag       bool
+	pse                uint32
+	psn                uint32
+	remoteAddr         net.Addr
+	logger             *log.Logger
+	mutex              *sync.RWMutex
+	observer           PLUSObserver
+	cryptoContext      PLUSCryptoContext
+	dropInvalidPackets bool
 }
 
-
-type PLUSInterface struct {
-  SignAndEncrypt func(*PLUSConn, []byte, []byte) ([]byte, error)
-  ValidateAndDecrypt func(*PLUSConn, []byte, []byte) ([]byte, error)
-  OnStateChanged func(*PLUSConn, uint16)
-  OnBasicPacketReceived func(*PLUSConn, *packet.PLUSPacket, error)
-  OnExtendedPacketReceived func(*PLUSConn, *packet.PLUSPacket, error)
+type PLUSObserver interface {
+	OnStateChanged(*PLUSConn, uint16)
+	OnBasicPacketReceived(*PLUSConn, *packet.PLUSPacket, error)
+	OnExtendedPacketReceived(*PLUSConn, *packet.PLUSPacket, error)
 }
 
-
-const maxPacketSize int = 4096
-const mUint32 uint64 = 4294967296
-
-// ZERO State
-const STATE_ZERO uint16 = 0
-// Only received, nothing sent so far
-const STATE_UNIFLOW_RECV uint16 = 1
-// Only sent, nothing received so far.
-const STATE_UNIFLOW_SENT uint16 = 2
-// Unused
-const STATE_ASSOCIATING uint16 = 3
-// Received and sent packets
-const STATE_ASSOCIATED uint16 = 4
-// Sent a packet with the S flag set
-const STATE_STOP_SENT uint16 = 5
-// Received a packet with the S flag set
-const STATE_STOP_RECV uint16 = 6
-// Connection closed
-const STATE_CLOSED uint16 = 7
-
-// Return state as a human readable value.
-func StateToString(state uint16) string {
-  switch(state) {
-  case STATE_ZERO: return "ZERO"
-  case STATE_UNIFLOW_RECV: return "UNIFLOW_RECV"
-  case STATE_UNIFLOW_SENT: return "UNIFLOW_SENT"
-  case STATE_ASSOCIATING: return "ASSOCIATING"
-  case STATE_ASSOCIATED: return "ASSOCIATED"
-  case STATE_STOP_SENT: return "STOP_SENT"
-  case STATE_STOP_RECV: return "STOP_RECV"
-  case STATE_CLOSED: return "CLOSED"
-  }
-  return "N/A"
+type PLUSCryptoContext interface {
+	SignAndEncrypt(*PLUSConn, []byte, []byte) ([]byte, error)
+	ValidateAndDecrypt(*PLUSConn, []byte, []byte) ([]byte, error)
 }
 
-// Create a PLUS server listening on laddr
-func ListenPLUSAware(laddr string, mkPLUSInterface func(*PLUSConn) *PLUSInterface) (*PLUSListener, error) {
-  packetConn, err := net.ListenPacket("udp", laddr)
-  
-  if(err != nil) {
-    return nil, err
-  }
-
-  var plusListener PLUSListener
-  plusListener.logger = log.New(os.Stdout, "Listener (true): ", log.Lshortfile)
-  plusListener.packetConn = packetConn
-  plusListener.serverMode = true
-  plusListener.connections = make(map[uint64]*PLUSConn)
-  plusListener.newConnections = make(chan *PLUSConn)
-  plusListener.mkPLUSInterface = mkPLUSInterface
-
-  go plusListener.listen()
-
-  return &plusListener, nil
-}
-
-// Create a PLUS server listening on laddr
-func ListenPLUS(laddr string) (*PLUSListener, error) {
-  return ListenPLUSAware(laddr, nil)
-}
-
-// Connect to a PLUS server. laddr is the local address and remoteAddr is the 
+// Connect to a PLUS server. laddr is the local address and remoteAddr is the
 // remote address.
-func DialPLUSAware(laddr string, remoteAddr net.Addr, mkPLUSInterface func(*PLUSConn) *PLUSInterface) (*PLUSConn, error) {
-  packetConn, err := net.ListenPacket("udp", laddr)
-  
-  if(err != nil) {
-    return nil, err
-  }
+func DialPLUSAware(laddr string, remoteAddr net.Addr, initConn func(*PLUSConn) error) (*PLUSConn, error) {
+	packetConn, err := net.ListenPacket("udp", laddr)
 
-  var plusListener PLUSListener
-  plusListener.logger = log.New(os.Stdout, "Listener (false): ", log.Lshortfile)
-  plusListener.packetConn = packetConn
-  plusListener.serverMode = false
-  plusListener.connections = make(map[uint64]*PLUSConn)
-  plusListener.mkPLUSInterface = mkPLUSInterface
+	if err != nil {
+		return nil, err
+	}
 
+	var plusListener PLUSListener
+	plusListener.logger = log.New(os.Stdout, "Listener (false): ", log.Lshortfile)
+	plusListener.packetConn = packetConn
+	plusListener.serverMode = false
+	plusListener.connections = make(map[uint64]*PLUSConn)
+	plusListener.initConn = initConn
 
-  // FIXME: Make this random. 
-  randomCAT := uint64(4) //totally random for now
-  plusListener.addConnection(randomCAT)
+	// FIXME: Make this random.
+	randomCAT := uint64(4) //totally random for now
+	plusListener.addConnection(randomCAT)
 
-  plusConnection, ok := plusListener.connections[randomCAT]
+	plusConnection, ok := plusListener.connections[randomCAT]
 
-  if(!ok) {
-    return nil, fmt.Errorf("Connection with CAT %d does not exist. BUG!", randomCAT)
-  }
+	if !ok {
+		return nil, fmt.Errorf("Connection with CAT %d does not exist. BUG!", randomCAT)
+	}
 
-  if(plusListener.mkPLUSInterface != nil) {
-    plusConnection.plusInterface = plusListener.mkPLUSInterface(plusConnection)
-  }
-  plusConnection.updateRemoteAddr(remoteAddr)
+	if plusListener.initConn != nil {
+		plusListener.initConn(plusConnection)
+	}
+	plusConnection.updateRemoteAddr(remoteAddr)
 
-  go plusListener.listen()
+	go plusListener.listen()
 
-  return plusConnection, nil
+	return plusConnection, nil
 }
 
-// Connect to a PLUS server. laddr is the local address and remoteAddr is the 
+// Connect to a PLUS server. laddr is the local address and remoteAddr is the
 // remote address.
 func DialPLUS(laddr string, remoteAddr net.Addr) (*PLUSConn, error) {
-  return DialPLUSAware(laddr, remoteAddr, nil)
+	return DialPLUSAware(laddr, remoteAddr, nil)
 }
 
 // Returns this connection's current remote address.
 func (conn *PLUSConn) RemoteAddr() net.Addr {
-  conn.mutex.RLock()
-  addr := conn.remoteAddr
-  conn.mutex.RUnlock()
-  return addr
+	conn.mutex.RLock()
+	addr := conn.remoteAddr
+	conn.mutex.RUnlock()
+	return addr
 }
 
 // Set the state and call on*State functions
 func (conn *PLUSConn) setState(newState uint16) {
-  conn.logger.Print(fmt.Sprintf("Old state: %s, New State: %s", StateToString(conn.state), StateToString(newState)))
-  conn.state = newState
-  switch newState {
-  case STATE_ZERO:
-     conn.onStateZero()
-     break
-  case STATE_UNIFLOW_RECV:
-     conn.onStateUniflowRecv()
-     break
-  case STATE_UNIFLOW_SENT:
-     conn.onStateUniflowSent()
-     break
-  case STATE_STOP_SENT:
-     conn.onStateStopSent()
-     break
-  case STATE_STOP_RECV:
-     conn.onStateStopRecv()
-     break
-  case STATE_CLOSED:
-     conn.onStateClosed()
-     break
-  }
+	conn.logger.Print(fmt.Sprintf("Old state: %s, New State: %s", StateToString(conn.state), StateToString(newState)))
+	conn.state = newState
+	switch newState {
+	case STATE_ZERO:
+		conn.onStateZero()
+		break
+	case STATE_UNIFLOW_RECV:
+		conn.onStateUniflowRecv()
+		break
+	case STATE_UNIFLOW_SENT:
+		conn.onStateUniflowSent()
+		break
+	case STATE_STOP_SENT:
+		conn.onStateStopSent()
+		break
+	case STATE_STOP_RECV:
+		conn.onStateStopRecv()
+		break
+	case STATE_CLOSED:
+		conn.onStateClosed()
+		break
+	}
 
-  // Notify observer, if any
-  if(conn.plusInterface != nil) {
-    if(conn.plusInterface.OnStateChanged != nil) {
-      conn.plusInterface.OnStateChanged(conn, conn.state)
-    }
-  }
+	// Notify observer, if any
+	if conn.observer != nil {
+		if conn.observer.OnStateChanged != nil {
+			conn.observer.OnStateChanged(conn, conn.state)
+		}
+	}
 }
 
 func (conn *PLUSConn) onStateZero() {
@@ -227,459 +144,398 @@ func (conn *PLUSConn) onStateClosed() {
 
 // Called to update the state on receiving a packet
 func (conn *PLUSConn) updateStateReceive(plusPacket *packet.PLUSPacket) {
-  switch conn.state {
-  case STATE_ZERO: 
-    conn.setState(STATE_UNIFLOW_RECV)
-    break
-  case STATE_UNIFLOW_RECV:
-    break
-  case STATE_UNIFLOW_SENT:
-    // Up to this point we only received stuff
-    conn.setState(STATE_ASSOCIATED)
-    break
-  case STATE_STOP_SENT:
-    // We sent a stop and received a stop?
-    if(plusPacket.SFlag()) {
-      conn.setState(STATE_CLOSED)
-    }
-    break
-  case STATE_STOP_RECV:
-    break
-  case STATE_CLOSED:
-    // Connection closed.
-    break
-  }
+	switch conn.state {
+	case STATE_ZERO:
+		conn.setState(STATE_UNIFLOW_RECV)
+		break
+	case STATE_UNIFLOW_RECV:
+		break
+	case STATE_UNIFLOW_SENT:
+		// Up to this point we only received stuff
+		conn.setState(STATE_ASSOCIATED)
+		break
+	case STATE_STOP_SENT:
+		// We sent a stop and received a stop?
+		if plusPacket.SFlag() {
+			conn.setState(STATE_CLOSED)
+		}
+		break
+	case STATE_STOP_RECV:
+		break
+	case STATE_CLOSED:
+		// Connection closed.
+		break
+	}
 }
 
 // Called to update the state on sending a packet
 func (conn *PLUSConn) updateStateSend(plusPacket *packet.PLUSPacket) {
-  switch conn.state {
-  case STATE_ZERO: 
-    conn.setState(STATE_UNIFLOW_SENT)
-    break
-  case STATE_UNIFLOW_RECV:
-    // Up to this point we only sent stuff
-    conn.setState(STATE_ASSOCIATED)
-    break
-  case STATE_UNIFLOW_SENT:
-    break
-  case STATE_STOP_SENT:
-    break
-  case STATE_STOP_RECV:
-    // We received a stop packet and now are trying to send one?
-    if(plusPacket.SFlag()) {
-      conn.setState(STATE_CLOSED)
-    }
-    break
-  case STATE_CLOSED:
-    break
-  }
+	switch conn.state {
+	case STATE_ZERO:
+		conn.setState(STATE_UNIFLOW_SENT)
+		break
+	case STATE_UNIFLOW_RECV:
+		// Up to this point we only sent stuff
+		conn.setState(STATE_ASSOCIATED)
+		break
+	case STATE_UNIFLOW_SENT:
+		break
+	case STATE_STOP_SENT:
+		break
+	case STATE_STOP_RECV:
+		// We received a stop packet and now are trying to send one?
+		if plusPacket.SFlag() {
+			conn.setState(STATE_CLOSED)
+		}
+		break
+	case STATE_CLOSED:
+		break
+	}
 }
 
 // Returns true if this connection is closed.
 func (conn *PLUSConn) IsClosed() bool {
-  conn.mutex.RLock()
-  defer conn.mutex.RUnlock()
+	conn.mutex.RLock()
+	defer conn.mutex.RUnlock()
 
-  closed := false
-  if(conn.state == STATE_CLOSED) {
-    closed = true
-  } else {
-    closed = false
-  }
+	closed := false
+	if conn.state == STATE_CLOSED {
+		closed = true
+	} else {
+		closed = false
+	}
 
-  return closed
+	return closed
 }
 
 // Returns the CAT
 func (conn *PLUSConn) CAT() uint64 {
-  conn.mutex.RLock()
-  defer conn.mutex.RUnlock()
+	conn.mutex.RLock()
+	defer conn.mutex.RUnlock()
 
-  cat := conn.cat
-  return cat
+	cat := conn.cat
+	return cat
 }
 
-// Send a raw packet (payload will be signed and encrypted)
+// Send a raw packet.
 func (conn *PLUSConn) SendPacket(plusPacket *packet.PLUSPacket) error {
-  conn.mutex.Lock()
-  defer conn.mutex.Unlock()
+	conn.mutex.Lock()
+	defer conn.mutex.Unlock()
 
-  return conn.sendPacket(plusPacket)
+	return conn.sendPacket(plusPacket)
 }
 
 // Send a packet. This function will send the bytes of the packet through
 // the underlying packet conn to the connections' current remote address.
+// Packet will be signed and encrypted.
 func (conn *PLUSConn) sendPacket(plusPacket *packet.PLUSPacket) error {
-  if(conn.state == STATE_CLOSED) {
-    return fmt.Errorf("Connection is closed!")
-  }
+	if conn.state == STATE_CLOSED {
+		return fmt.Errorf("Connection is closed!")
+	}
 
-  _, err := conn.encrypt(plusPacket)
+	_, err := conn.signAndEncrypt(plusPacket)
 
-  if(err != nil) {
-    return err
-  }
+	if err != nil {
+		return err
+	}
 
-  conn.logger.Print(fmt.Sprintf("sendPacket: Sending packet PSN := %d, PSE := %d", plusPacket.PSN(), plusPacket.PSE()))
-  conn.logger.Print(plusPacket.Buffer())
-  
-  packetCAT := plusPacket.CAT()
+	conn.logger.Print(fmt.Sprintf("sendPacket: Sending packet PSN := %d, PSE := %d", plusPacket.PSN(), plusPacket.PSE()))
+	conn.logger.Print(plusPacket.Buffer())
 
-  if(packetCAT != conn.cat) {
-    // There's no sane sitution in which this can happen. 
-    panic(fmt.Sprintf("Expected CAT %d but tried sending packet with CAT %d!", conn.cat, packetCAT))
-  }
+	packetCAT := plusPacket.CAT()
 
-  buffer := plusPacket.Buffer()
-  buflen := len(buffer)
+	if packetCAT != conn.cat {
+		// There's no sane sitution in which this can happen.
+		panic(fmt.Sprintf("Expected CAT %d but tried sending packet with CAT %d!", conn.cat, packetCAT))
+	}
 
-  remoteAddr := conn.remoteAddr
+	buffer := plusPacket.Buffer()
+	buflen := len(buffer)
 
-  conn.logger.Print(fmt.Sprintf("sendPacket: WriteTo %s", remoteAddr.String()))
+	remoteAddr := conn.remoteAddr
 
-  n, err := conn.packetConn.WriteTo(buffer, remoteAddr)
+	conn.logger.Print(fmt.Sprintf("sendPacket: WriteTo %s", remoteAddr.String()))
 
-  if(n != buflen) {
-    return fmt.Errorf("Expected to send %d bytes but sent were %d bytes!", n, buflen)
-  }
+	n, err := conn.packetConn.WriteTo(buffer, remoteAddr)
 
-  if(err != nil) {
-    return err
-  }
+	if n != buflen {
+		return fmt.Errorf("Expected to send %d bytes but sent were %d bytes!", n, buflen)
+	}
 
-  conn.updateStateSend(plusPacket)
+	if err != nil {
+		return err
+	}
 
-  return nil
+	conn.updateStateSend(plusPacket)
+
+	return nil
 }
 
 // Returns the state of this connection
 func (conn *PLUSConn) State() uint16 {
-  conn.mutex.RLock()
-  state := conn.state
-  conn.mutex.RUnlock()
-  return state
+	conn.mutex.RLock()
+	state := conn.state
+	conn.mutex.RUnlock()
+	return state
 }
 
 // Update remote address
 func (conn *PLUSConn) updateRemoteAddr(remoteAddr net.Addr) {
-  conn.remoteAddr = remoteAddr
+	conn.remoteAddr = remoteAddr
 }
 
 // Called by the listener when a new packet is received. This function handles
 // protocol stuff such as updating the PSE and then adds the packet to a channel
 // that is read by the ReadFrom method of this connection.
-func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteAddr net.Addr)  {
-  conn.mutex.Lock()
-  defer conn.mutex.Unlock()
+func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteAddr net.Addr) {
+	conn.mutex.Lock()
+	defer conn.mutex.Unlock()
 
-  conn.logger.Print(fmt.Sprintf("Received packet PSN := %d, PSE := %d", plusPacket.PSN(), plusPacket.PSE()))
-  conn.logger.Print(plusPacket.Buffer())
+	conn.logger.Print(fmt.Sprintf("Received packet PSN := %d, PSE := %d", plusPacket.PSN(), plusPacket.PSE()))
+	conn.logger.Print(plusPacket.Buffer())
 
-  if(conn.state == STATE_CLOSED) {
-    conn.logger.Print("Connection is in STATE_CLOSED")
-    return //don't accept packets if the connection is closed
-  }
+	if conn.state == STATE_CLOSED {
+		conn.logger.Print("Connection is in STATE_CLOSED")
+		return //don't accept packets if the connection is closed
+	}
 
-  // Decrypt and validate
-  if(conn.plusInterface != nil) {
-    if(conn.plusInterface.ValidateAndDecrypt != nil) {
-      payload, err := conn.plusInterface.ValidateAndDecrypt(conn, plusPacket.Header(), plusPacket.Payload())
+	// Decrypt and validate
+	err := conn.validateAndDecrypt(plusPacket)
+	if err != nil {
+		if !conn.dropInvalidPackets {
+			conn.inChannel <- newInPacket(plusPacket, err)
+			conn.notifyObservers(plusPacket, err)
+		}
+		return
+	}
 
-      if(err != nil) {
-        // If the upper layer is interested in invalid packets...
-        if(!conn.dropInvalidPackets) {
-          conn.inChannel <- newInPacket(plusPacket, err)
-          conn.notifyObservers(plusPacket, err)
-        }
-        return
-      }
+	packetCAT := plusPacket.CAT()
 
-      plusPacket.SetPayload(payload)
-    }
-  }
+	if packetCAT != conn.cat {
+		// There's no sane sitution in which this can happen.
+		panic(fmt.Sprintf("Expected CAT %d but received packet with CAT %d!", conn.cat, packetCAT))
+	}
 
-  packetCAT := plusPacket.CAT()
+	conn.updateRemoteAddr(remoteAddr)
 
-  if(packetCAT != conn.cat) {
-    // There's no sane sitution in which this can happen. 
-    panic(fmt.Sprintf("Expected CAT %d but received packet with CAT %d!", conn.cat, packetCAT))
-  }
+	// Update PSE
+	conn.pse = plusPacket.PSN()
 
+	// TODO: make this non-blocking. If we can't write to the channel
+	//       immediately we should just drop the packet.
+	conn.inChannel <- newInPacket(plusPacket, nil)
 
-  conn.updateRemoteAddr(remoteAddr)
-  
+	conn.updateStateReceive(plusPacket)
 
-  // Update PSE
-  conn.pse = plusPacket.PSN()
-
-  // TODO: make this non-blocking. If we can't write to the channel
-  //       immediately we should just drop the packet.
-  conn.inChannel <- newInPacket(plusPacket, nil)
-
-  conn.updateStateReceive(plusPacket)
-
-  conn.notifyObservers(plusPacket, nil)
+	conn.notifyObservers(plusPacket, nil)
 }
 
 func (conn *PLUSConn) notifyObservers(plusPacket *packet.PLUSPacket, err error) {
-  // Notify observers if any
-  if(conn.plusInterface != nil) {
-    if(plusPacket.XFlag()) {
-       if(conn.plusInterface.OnExtendedPacketReceived != nil) {
-         conn.plusInterface.OnExtendedPacketReceived(conn, plusPacket, err)
-       }
-    } else {
-       if(conn.plusInterface.OnBasicPacketReceived != nil) {
-         conn.plusInterface.OnBasicPacketReceived(conn, plusPacket, err)
-       }
-    }
-  }
-}
-
-// This listens on the internal packet connection for new packets, tries to
-// parse them as a PLUS packet and creates new connection if packets with
-// new CAT arrive. 
-func (listener *PLUSListener) listen() {
-  listener.logger.Print(fmt.Sprintf("listen() on %s",listener.packetConn.LocalAddr().String()))
-
-  // We can re-use this buffer because PLUSPacket copies the buffer
-  buffer := make([]byte, maxPacketSize)
-  for {
-    listener.logger.Print("listen: ReadFrom")
-    n, remoteAddr, err := listener.packetConn.ReadFrom(buffer)
-    listener.logger.Print("Read.")
-
-    if(err != nil) {
-      // TODO: Close connections/signal close
-      listener.logger.Printf("Reading from packetConn failed: %s", err.Error())
-      return
-    } else {
-      plusPacket, err := packet.NewPLUSPacket(buffer[:n])
-
-      if(err != nil) {
-        // Drop packets that aren't PLUS packets
-        listener.logger.Print("Parsing packet failed.")
-      } else {
-
-        plusConnection, ok := listener.connections[plusPacket.CAT()]
-
-        if(!ok) {
-          if(listener.serverMode) {
-            plusConnection = listener.addConnection(plusPacket.CAT())
-            if(listener.mkPLUSInterface != nil) {
-              plusConnection.SetObserver(listener.mkPLUSInterface(plusConnection))
-            }
-          } else {
-            // Invalid CAT. Drop packet. 
-            listener.logger.Print("Bogus packet in non-servermode received")
-            continue
-          }
-        }
-
-        listener.logger.Print("Invoking onNewPacketReceived")
-
-        plusConnection.onNewPacketReceived(plusPacket, remoteAddr)
-      }
-    }
-  }
-}
-
-// Add and create a new connection. This is called when a new packet with a new CAT
-// is received. 
-func (listener *PLUSListener) addConnection(cat uint64) (*PLUSConn)  {
-  listener.logger.Print(fmt.Sprintf("addConnection: %d", cat))
-
-  var plusConnection PLUSConn
-
-  plusConnection.mutex = &sync.RWMutex{}
-  plusConnection.mutex.Lock()
-  defer plusConnection.mutex.Unlock()
-
-  /* Server mode or client mode? */
-  if(listener.serverMode) {
-    plusConnection.state = STATE_UNIFLOW_RECV
-    listener.logger.Print(fmt.Sprintf("addConnection: write to chan"))
-    listener.newConnections <- &plusConnection
-    listener.logger.Print(fmt.Sprintf("addConnection: wrote to chan"))
-  } else {
-    plusConnection.state = STATE_ZERO
-  }
-
-  plusConnection.inChannel = make(chan inPacket, 10)
-  plusConnection.cat = cat
-  plusConnection.defaultLFlag = false
-  plusConnection.defaultRFlag = false
-  plusConnection.packetConn = listener.packetConn
-  plusConnection.pse = 0
-  plusConnection.psn = 1
-  plusConnection.logger = log.New(os.Stdout, fmt.Sprintf("Connection %d: ", cat), log.Lshortfile)
-  plusConnection.dropInvalidPackets = true
-
-  listener.connections[cat] = &plusConnection
-
-  return &plusConnection
-}
-
-// Wait for a new connection and return it. Blocks forever.
-// A connection is considered a new connection if a packet
-// with a new CAT in the PLUS header is received.
-func (listener *PLUSListener) Accept() (net.PacketConn, error) {
-  listener.logger.Print("Waiting for new connection...")
-  conn := <- listener.newConnections
-  listener.logger.Print("New connection \\o/")
-  return conn, nil
-}
-
-// Closes this listener.
-func (listener *PLUSListener) Close() error {
-  // TODO: Close channels an all that stuff
-  listener.logger.Print("Close()")
-  return listener.packetConn.Close()
+	// Notify observers if any
+	if conn.observer != nil {
+		if plusPacket.XFlag() {
+			conn.observer.OnExtendedPacketReceived(conn, plusPacket, err)
+		} else {
+			conn.observer.OnBasicPacketReceived(conn, plusPacket, err)
+		}
+	}
 }
 
 // Closes this connection.
 func (conn *PLUSConn) Close() error {
-  // TODO: Maybe we need to do some cleanup?
-  // FIXME: This is obviously bullshit because all PLUSConn from the server share
-  //        the same packetConn. Maybe switch to channels?
-  conn.logger.Print("Close()")
-  return conn.packetConn.Close()
+	// TODO: Maybe we need to do some cleanup?
+	// FIXME: This is obviously bullshit because all PLUSConn from the server share
+	//        the same packetConn. Maybe switch to channels?
+	conn.logger.Print("Close()")
+	return conn.packetConn.Close()
 }
 
-func (conn *PLUSConn) SetObserver(observer *PLUSInterface) {
-  conn.mutex.RLock()
-  defer conn.mutex.RUnlock()
+// Returns the observer
+func (conn *PLUSConn) Observer() PLUSObserver {
+	conn.mutex.RLock()
+	defer conn.mutex.RUnlock()
 
-  conn.plusInterface = observer
+	return conn.observer
+}
+
+// Sets the observer
+func (conn *PLUSConn) SetObserver(observer PLUSObserver) {
+	conn.mutex.Lock()
+	defer conn.mutex.Unlock()
+
+	conn.observer = observer
+}
+
+// Returns the crypto context
+func (conn *PLUSConn) CryptoContext() PLUSCryptoContext {
+	conn.mutex.RLock()
+	defer conn.mutex.RUnlock()
+
+	return conn.cryptoContext
+}
+
+// Sets the crypto context
+func (conn *PLUSConn) SetCryptoContext(cryptoContext PLUSCryptoContext) {
+	conn.mutex.Lock()
+	defer conn.mutex.Unlock()
+
+	conn.cryptoContext = cryptoContext
 }
 
 // Returns the local address of this connection.
 func (conn *PLUSConn) LocalAddr() net.Addr {
-  return conn.packetConn.LocalAddr()
+	return conn.packetConn.LocalAddr()
 }
 
 // Read bytes from the connection into the supplied buffer and return the
 // number of bytes read, this connection's current remote address.
 func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
-  // NOTE: This function should have as little logic as necessary.
-  //       All the protocol stuff should be done elsewhere. This is just a dummy
-  //       wrapper around the channel.
+	// NOTE: This function should have as little logic as necessary.
+	//       All the protocol stuff should be done elsewhere. This is just a dummy
+	//       wrapper around the channel.
 
-  // TODO: Handle client IP address changes
-  
-  plusPacket, err := conn.ReadPacket()
+	// TODO: Handle client IP address changes
 
-  if(err != nil) {
-    return 0, nil, err
-  }
+	plusPacket, err := conn.ReadPacket()
 
-  n := copy(b, plusPacket.Payload())
-  return n, conn.RemoteAddr(), nil
+	if err != nil {
+		return 0, nil, err
+	}
+
+	n := copy(b, plusPacket.Payload())
+	return n, conn.RemoteAddr(), nil
 }
 
 // similar to ReadFrom but does not return an address
 func (conn *PLUSConn) Read(b []byte) (int, error) {
-  n, _, err := conn.ReadFrom(b)
-  return n, err
+	n, _, err := conn.ReadFrom(b)
+	return n, err
 }
 
 // Read a raw packet (validated and payload decrypted)
 func (conn *PLUSConn) ReadPacket() (*packet.PLUSPacket, error) {
-  conn.mutex.RLock()
-  ch := conn.inChannel
-  conn.mutex.RUnlock()
-  select {
-    case ip := <- ch:
+	conn.mutex.RLock()
+	ch := conn.inChannel
+	conn.mutex.RUnlock()
+	select {
+	case ip := <-ch:
 
-      if(ip.err != nil) {
-        return nil, ip.err
-      }
+		if ip.err != nil {
+			return nil, ip.err
+		}
 
-      return ip.packet, nil
-  }
+		return ip.packet, nil
+	}
 }
 
-func (conn *PLUSConn) encrypt(plusPacket *packet.PLUSPacket) (int, error) {
-  if(conn.plusInterface != nil) {
-    if(conn.plusInterface.SignAndEncrypt != nil) {
-      payload, err := conn.plusInterface.SignAndEncrypt(conn, plusPacket.Header(), plusPacket.Payload())
+// Validate & Decrypt the packet
+func (conn *PLUSConn) ValidateAndDecrypt(plusPacket *packet.PLUSPacket) error {
+	conn.mutex.Lock()
+	defer conn.mutex.Unlock()
 
-      if(err != nil) {
-        return 0, err
-      }
+	return conn.validateAndDecrypt(plusPacket)
+}
 
-      plusPacket.SetPayload(payload)
+// Sign & Encrypt the packet
+func (conn *PLUSConn) SignAndEncrypt(plusPacket *packet.PLUSPacket) (int, error) {
+	conn.mutex.Lock()
+	defer conn.mutex.Unlock()
 
-      return len(payload), nil
-    }
-  }
-  return len(plusPacket.Payload()), nil
+	return conn.signAndEncrypt(plusPacket)
+}
+
+// Validate & Decrypt the packet
+func (conn *PLUSConn) validateAndDecrypt(plusPacket *packet.PLUSPacket) error {
+	if conn.cryptoContext != nil {
+		payload, err := conn.cryptoContext.ValidateAndDecrypt(conn, plusPacket.Header(), plusPacket.Payload())
+
+		if err != nil {
+			return err
+		}
+
+		plusPacket.SetPayload(payload)
+	}
+	return nil
+}
+
+// Sign & Encrypt the packet.
+func (conn *PLUSConn) signAndEncrypt(plusPacket *packet.PLUSPacket) (int, error) {
+	if conn.cryptoContext != nil {
+		payload, err := conn.cryptoContext.SignAndEncrypt(conn, plusPacket.Header(), plusPacket.Payload())
+
+		if err != nil {
+			return 0, err
+		}
+
+		plusPacket.SetPayload(payload)
+
+		return len(payload), nil
+	}
+	return len(plusPacket.Payload()), nil
 }
 
 // Sends data in a PLUS packet with a basic header.
 // This essentially creates the PLUS packet and then calls
 // sendPacket.
 func (conn *PLUSConn) sendData(b []byte) (int, error) {
-  conn.mutex.Lock()
-  defer conn.mutex.Unlock()
+	conn.mutex.Lock()
+	defer conn.mutex.Unlock()
 
-  plusPacket := packet.NewBasicPLUSPacket(conn.defaultLFlag, conn.defaultLFlag, false,
-                   conn.cat, conn.psn, conn.pse, b)
+	plusPacket := packet.NewBasicPLUSPacket(conn.defaultLFlag, conn.defaultLFlag, false,
+		conn.cat, conn.psn, conn.pse, b)
 
-  conn.psn++
+	conn.psn++
 
-  return len(b), conn.sendPacket(plusPacket)
+	return len(b), conn.sendPacket(plusPacket)
 }
 
 // Sends data in a PLUS packet with a basic header with the specified flags set.
 // This essentially creates the PLUS packet and then calls
 // sendPacket.
 func (conn *PLUSConn) sendDataWithFlags(b []byte, lFlag bool, rFlag bool, sFlag bool) (int, error) {
-  conn.mutex.Lock()
-  defer conn.mutex.Unlock()
+	conn.mutex.Lock()
+	defer conn.mutex.Unlock()
 
-  plusPacket := packet.NewBasicPLUSPacket(lFlag, rFlag, sFlag,
-                   conn.cat, conn.psn, conn.pse, b)
+	plusPacket := packet.NewBasicPLUSPacket(lFlag, rFlag, sFlag,
+		conn.cat, conn.psn, conn.pse, b)
 
-  conn.psn++
+	conn.psn++
 
-  return len(b), conn.sendPacket(plusPacket)
+	return len(b), conn.sendPacket(plusPacket)
 }
 
 // Write bytes. The addr argument will be ignored because PLUS handles
 // the remote address.
 func (conn *PLUSConn) WriteTo(b []byte, addr net.Addr) (int, error) {
-  // NOTE: We're ignoring Addr here because PLUS takes care of IP address changes.
-  //       Which means yeah... we override the address the overlaying layer wants stuff
-  //       to send to. Also... all the protocol stuff should be done elsehwere.
+	// NOTE: We're ignoring Addr here because PLUS takes care of IP address changes.
+	//       Which means yeah... we override the address the overlaying layer wants stuff
+	//       to send to. Also... all the protocol stuff should be done elsehwere.
 
-  return conn.sendData(b)
+	return conn.sendData(b)
 }
 
-// see WriteTo. 
+// see WriteTo.
 func (conn *PLUSConn) Write(b []byte) (int, error) {
-  return conn.sendData(b)
+	return conn.sendData(b)
 }
 
 // see WriteTo. This function allows to specify flags for the basic PLUS header of the packet
 // this data is sent with.
 func (conn *PLUSConn) WriteWithFlags(b []byte, lFlag bool, rFlag bool, sFlag bool) (int, error) {
-  return conn.sendDataWithFlags(b, lFlag, rFlag, sFlag)
+	return conn.sendDataWithFlags(b, lFlag, rFlag, sFlag)
 }
 
-  
 // TODO
 func (*PLUSConn) SetDeadline(t time.Time) error {
-  return nil
+	return nil
 }
 
 // TODO
 func (*PLUSConn) SetReadDeadline(t time.Time) error {
-  return nil
+	return nil
 }
 
 // TODO
 func (*PLUSConn) SetWriteDeadline(t time.Time) error {
-  return nil
+	return nil
 }
