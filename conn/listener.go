@@ -87,6 +87,10 @@ func ListenPLUSAware(laddr string, initConn func(*PLUSConn) error) (*PLUSListene
 		return nil, err
 	}
 
+	return ListenPLUSWithPacketConn(packetConn, initConn)
+}
+
+func ListenPLUSWithPacketConn(packetConn net.PacketConn, initConn func(*PLUSConn) error) (*PLUSListener, error) {
 	var plusListener PLUSListener
 	plusListener.logger = log.New(os.Stdout, "Listener (true): ", log.Lshortfile)
 	plusListener.packetConn = packetConn

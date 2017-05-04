@@ -50,6 +50,16 @@ func DialPLUSAware(laddr string, remoteAddr net.Addr, initConn func(*PLUSConn) e
 		return nil, err
 	}
 
+	return DialPLUSWithPacketConn(packetConn, remoteAddr, initConn)
+}
+
+// Connect to a PLUS server. laddr is the local address and remoteAddr is the
+// remote address.
+func DialPLUS(laddr string, remoteAddr net.Addr) (*PLUSConn, error) {
+	return DialPLUSAware(laddr, remoteAddr, nil)
+}
+
+func DialPLUSWithPacketConn(packetConn net.PacketConn, remoteAddr net.Addr, initConn func(*PLUSConn) error) (*PLUSConn, error) {
 	var plusListener PLUSListener
 	plusListener.logger = log.New(os.Stdout, "Listener (false): ", log.Lshortfile)
 	plusListener.packetConn = packetConn
@@ -75,12 +85,6 @@ func DialPLUSAware(laddr string, remoteAddr net.Addr, initConn func(*PLUSConn) e
 	go plusListener.listen()
 
 	return plusConnection, nil
-}
-
-// Connect to a PLUS server. laddr is the local address and remoteAddr is the
-// remote address.
-func DialPLUS(laddr string, remoteAddr net.Addr) (*PLUSConn, error) {
-	return DialPLUSAware(laddr, remoteAddr, nil)
 }
 
 // Returns this connection's current remote address.
