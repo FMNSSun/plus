@@ -307,7 +307,7 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
 	err := conn.validateAndDecrypt(plusPacket)
 	if err != nil {
 		if !conn.dropInvalidPackets {
-			conn.inChannel <- newInPacket(plusPacket, err)
+			conn.inChannel <- newInPacket(plusPacket, remoteAddr, err)
 			conn.notifyObservers(plusPacket, err)
 		}
 		return
@@ -327,7 +327,7 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
 
 	// TODO: make this non-blocking. If we can't write to the channel
 	//       immediately we should just drop the packet.
-	conn.inChannel <- newInPacket(plusPacket, nil)
+	conn.inChannel <- newInPacket(plusPacket, remoteAddr, nil)
 
 	conn.updateStateReceive(plusPacket)
 
@@ -400,14 +400,14 @@ func (conn *PLUSConn) ReadFrom(b []byte) (int, net.Addr, error) {
 
 	// TODO: Handle client IP address changes
 
-	plusPacket, err := conn.ReadPacket()
+	plusPacket, addr, err := conn.ReadPacket()
 
 	if err != nil {
-		return 0, nil, err
+		return 0, addr, err
 	}
 
 	n := copy(b, plusPacket.Payload())
-	return n, conn.RemoteAddr(), nil
+	return n, addr, nil
 }
 
 // similar to ReadFrom but does not return an address
@@ -417,7 +417,7 @@ func (conn *PLUSConn) Read(b []byte) (int, error) {
 }
 
 // Read a raw packet (validated and payload decrypted)
-func (conn *PLUSConn) ReadPacket() (*packet.PLUSPacket, error) {
+func (conn *PLUSConn) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
 	conn.mutex.RLock()
 	ch := conn.inChannel
 	conn.mutex.RUnlock()
@@ -425,10 +425,10 @@ func (conn *PLUSConn) ReadPacket() (*packet.PLUSPacket, error) {
 	case ip := <-ch:
 
 		if ip.err != nil {
-			return nil, ip.err
+			return ip.packet, ip.addr, ip.err
 		}
 
-		return ip.packet, nil
+		return ip.packet, ip.addr, nil
 	}
 }
 

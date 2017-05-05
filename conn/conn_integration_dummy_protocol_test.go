@@ -8,6 +8,7 @@ import "fmt"
 //  Tests the invocation of the SignAndEncrypt and ValidateAndDecrypt
 //  callbacks.
 
+
 type dummyProtocol_CryptoContext struct {
 	key byte
 }
@@ -102,3 +103,4 @@ func TestDummyProtocol(t *testing.T) {
 
 	pingPong(t, serverConn, client, []byte{0xCA, 0xFE, 0xBA, 0xBE})
 }
+

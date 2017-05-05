@@ -11,13 +11,15 @@ import "sync"
 // to ReadFrom
 type inPacket struct {
 	packet *packet.PLUSPacket
+	addr   net.Addr
 	err    error
 }
 
-func newInPacket(packet *packet.PLUSPacket, err error) inPacket {
+func newInPacket(packet *packet.PLUSPacket, addr net.Addr, err error) inPacket {
 	var ip inPacket
 	ip.packet = packet
 	ip.err = err
+	ip.addr = addr
 	return ip
 }
 
@@ -198,7 +200,7 @@ func (listener *PLUSListener) addConnection(cat uint64) *PLUSConn {
 // Wait for a new connection and return it. Blocks forever.
 // A connection is considered a new connection if a packet
 // with a new CAT in the PLUS header is received.
-func (listener *PLUSListener) Accept() (net.PacketConn, error) {
+func (listener *PLUSListener) Accept() (*PLUSConn, error) {
 	listener.logger.Print("Waiting for new connection...")
 	conn := <-listener.newConnections
 	listener.logger.Print("New connection \\o/")
