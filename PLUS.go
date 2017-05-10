@@ -44,6 +44,9 @@ func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 }
 
 func (plus *PLUS) UpdateCAT(oldCat uint64, newCat uint64) error {
+	plus.mutex.Lock()
+	defer plus.mutex.Unlock()
+
 	oldConnectionState, ok := plus.connectionStates[oldCat]
 	if !ok {
 		return fmt.Errorf("Unknown CAT %d!", oldCat)
@@ -57,6 +60,9 @@ func (plus *PLUS) UpdateCAT(oldCat uint64, newCat uint64) error {
 }
 
 func (plus *PLUS) GetPLUSConnState(cat uint64) (*PLUSConnState, error) {
+	plus.mutex.Lock()
+	defer plus.mutex.Unlock()
+
 	plusConnState, ok := plus.connectionStates[cat]
 	if !ok {
 		return nil, fmt.Errorf("Unknown CAT %d!", cat)
