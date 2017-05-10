@@ -3,18 +3,21 @@ package PLUS
 import "plus/packet"
 import "fmt"
 import "sync"
+import "net"
 
 /* type PLUS */
 
 type PLUS struct {
 	connectionStates map[uint64]*PLUSConnState
 	mutex *sync.Mutex
+	packetConn net.PacketConn
+	maxPacketSize int
 }
 
 // Process a PLUS packet. Returns unprotected part of PCF data that
 // needs to be sent back through an encrypted feedback channel or 
 // nil when nothing is to send back.
-func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket, feedbackData []byte) ([]byte, error) {
+func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 	plus.mutex.Lock()
 
 	cat := plusPacket.CAT()
@@ -32,10 +35,6 @@ func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket, feedbackData []by
 	defer connectionState.mutex.Unlock()	
 
 	connectionState.pse = plusPacket.PSN()
-
-    if feedbackData != nil {
-		connectionState.addPCFFeedback(feedbackData)
-	}
 
 	if plusPacket.XFlag() { //extended header? need additional handling here
 		return plus.handleExtendedPacket(plusPacket)
@@ -74,7 +73,58 @@ func (plus *PLUS) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, e
 	return unprotected, nil
 }
 
+
+func (plus *PLUS) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
+	buffer := make([]byte, plus.maxPacketSize)
+
+	_, addr, err := plus.packetConn.ReadFrom(buffer)
+
+	if err != nil {
+		return nil, addr, err
+	}
+
+	plusPacket, err := packet.NewPLUSPacket(buffer)
+
+	if err != nil {
+		return nil, addr, err
+	}
+
+	return plusPacket, addr, nil
+}
+
+func (plus *PLUS) ReadAndProcessPacket() (*packet.PLUSPacket, net.Addr, []byte, error) {
+	plusPacket, addr, err := plus.ReadPacket()
+
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	feedbackData, err := plus.ProcessPacket(plusPacket)
+
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return plusPacket, addr, feedbackData, nil
+}
+
+func (plus *PLUS) WritePacket(plusPacket *packet.PLUSPacket, addr net.Addr) error {
+	buffer := plusPacket.Buffer()
+	n, err := plus.packetConn.WriteTo(buffer, addr)
+
+	if err != nil {
+		return err
+	}
+
+	if n != len(buffer) {
+		return fmt.Errorf("Expected to send %d bytes but could only send %d bytes!", len(buffer), n)
+	}
+
+	return nil
+}
+
 /* /type PLUS */
+
 
 /* type PLUSConnState */
 
@@ -120,7 +170,7 @@ func (plusConnState *PLUSConnState) SetCAT(newCat uint64) {
 	plusConnState.cat = newCat
 }
 
-func (plusConnState *PLUSConnState) addPCFFeedback(feedbackData []byte) error {
+func (plusConnState *PLUSConnState) AddPCFFeedback(feedbackData []byte) error {
 	//TODO
 	return nil
 }
