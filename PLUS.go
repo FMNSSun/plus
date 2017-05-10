@@ -7,14 +7,18 @@ import "sync"
 /* type PLUS */
 
 type PLUS struct {
-	connectionStates map[uint64]*PLUSConnState 
+	connectionStates map[uint64]*PLUSConnState
+	mutex *sync.Mutex
 }
 
 // Process a PLUS packet. Returns unprotected part of PCF data that
 // needs to be sent back through an encrypted feedback channel or 
 // nil when nothing is to send back.
-func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
+func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket, feedbackData []byte) ([]byte, error) {
+	plus.mutex.Lock()
+
 	cat := plusPacket.CAT()
+
 	connectionState, ok := plus.connectionStates[cat]
 
 	if !ok {
@@ -22,12 +26,21 @@ func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 		connectionState := NewPLUSConnState(cat)
 		plus.connectionStates[cat] = connectionState
 	}
+	plus.mutex.Unlock()
+
+	connectionState.mutex.Lock()
+	defer connectionState.mutex.Unlock()	
 
 	connectionState.pse = plusPacket.PSN()
+
+    if feedbackData != nil {
+		connectionState.addPCFFeedback(feedbackData)
+	}
 
 	if plusPacket.XFlag() { //extended header? need additional handling here
 		return plus.handleExtendedPacket(plusPacket)
 	}
+
 	return nil, nil
 }
 
@@ -105,6 +118,11 @@ func (plusConnState *PLUSConnState) SetCAT(newCat uint64) {
 	defer plusConnState.mutex.Unlock()
 
 	plusConnState.cat = newCat
+}
+
+func (plusConnState *PLUSConnState) addPCFFeedback(feedbackData []byte) error {
+	//TODO
+	return nil
 }
 
 func (plusConnState *PLUSConnState) PrepareNextPacket() (*packet.PLUSPacket, error) {
