@@ -227,6 +227,41 @@ func (plusPacket *PLUSPacket) PCFValue() ([]byte, error) {
 	return plusPacket.header[pcfILenIndex+1:pcfILenIndex+1+int(pcfLen)], nil
 }
 
+// Returns the unprotected part of the PCF value. Should be used read-only, can be used
+// write, but be cautious (PCF Len etc.)
+func (plusPacket *PLUSPacket) PCFValueUnprotected() ([]byte, error) {
+	if !plusPacket.XFlag() {
+		return nil, errors.New("No PCF Value present in basic header.")
+	}
+	
+	pcfILenIndex := -1
+
+	if plusPacket.header[20] == 0x00 { //2 byte PCF type as usual
+		pcfILenIndex = 22
+	} else if plusPacket.header[20] == 0xFF { //no PCF Len/PCF I as usual
+		return nil, errors.New("No PCF Value due to PCF Type = 0xFF")
+	} else {
+		pcfILenIndex = 21
+	}
+
+	pcfLen := uint8(plusPacket.header[pcfILenIndex] >> 2)
+	pcfIntegrity := uint8(plusPacket.header[pcfILenIndex] & 0x03)
+
+	offset := 0
+
+	if pcfIntegrity == PCF_INTEGRITY_FULL {
+		return nil, nil
+	} else if pcfIntegrity == PCF_INTEGRITY_ZERO {
+		offset = int(pcfLen)
+	} else if pcfIntegrity == PCF_INTEGRITY_HALF {
+		offset = int(pcfLen / 2)
+	} else if pcfIntegrity == PCF_INTEGRITY_QUARTER {
+		offset = int(pcfLen / 4)
+	}
+
+	return plusPacket.header[pcfILenIndex+1+offset:pcfILenIndex+1+int(pcfLen)], nil
+}
+
 // Returns the Header with unprotected fields zeroed out.
 // Safe to modfify as it is a copy.
 func (plusPacket *PLUSPacket) HeaderWithZeroes() ([]byte) {
@@ -251,19 +286,20 @@ func (plusPacket *PLUSPacket) HeaderWithZeroes() ([]byte) {
 	pcfIntegrity := uint8(plusPacket.header[pcfILenIndex] & 0x03)
 
 	pcfValueIndex := pcfILenIndex + 1
-	pcfProtectedLen := 0
+
+	pcfUnprotectedStartIndex := 0
 	if pcfIntegrity == PCF_INTEGRITY_FULL {
-		pcfProtectedLen = int(pcfLen)
+		pcfUnprotectedStartIndex = 0
 	} else if pcfIntegrity == PCF_INTEGRITY_ZERO {
-		pcfProtectedLen = 0
+		pcfUnprotectedStartIndex = int(pcfLen)
 	} else if pcfIntegrity == PCF_INTEGRITY_HALF {
-		pcfProtectedLen = int(pcfLen / 2)
+		pcfUnprotectedStartIndex = pcfValueIndex + int(pcfLen / 2)
 	} else if pcfIntegrity == PCF_INTEGRITY_QUARTER {
-		pcfProtectedLen = int(pcfLen / 4)
+		pcfUnprotectedStartIndex = pcfValueIndex + int(pcfLen / 4)
 	}
 
-	for i := 0; i < pcfProtectedLen; i++ {
-		headerCopy[pcfValueIndex + i] = 0x00		
+	for i := pcfUnprotectedStartIndex; i < pcfValueIndex + int(pcfLen); i++ {
+		headerCopy[i] = 0x00		
 	}
 
 	return headerCopy

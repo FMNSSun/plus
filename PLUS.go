@@ -10,6 +10,9 @@ type PLUS struct {
 	connectionStates map[uint64]*PLUSConnState 
 }
 
+// Process a PLUS packet. Returns unprotected part of PCF data that
+// needs to be sent back through an encrypted feedback channel or 
+// nil when nothing is to send back.
 func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 	cat := plusPacket.CAT()
 	connectionState, ok := plus.connectionStates[cat]
@@ -50,7 +53,12 @@ func (plus *PLUS) GetPLUSConnState(cat uint64) (*PLUSConnState, error) {
 }
 
 func (plus *PLUS) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
-	return nil, nil
+	unprotected, err := plusPacket.PCFValueUnprotected()
+	if err != nil {
+		return nil, nil
+	}
+
+	return unprotected, nil
 }
 
 /* /type PLUS */
