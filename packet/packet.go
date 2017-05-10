@@ -28,7 +28,7 @@ const MAGIC uint32 = 0xd8007ff
 const PCF_INTEGRITY_ZERO uint8 = 0
 const PCF_INTEGRITY_QUARTER uint8 = 1
 const PCF_INTEGRITY_HALF uint8 = 2
-const PCF_INTEGRITY_FULL uint8 = 3 
+const PCF_INTEGRITY_FULL uint8 = 3
 
 // Returns value of the L flag
 func (plusPacket *PLUSPacket) LFlag() bool {
@@ -210,7 +210,7 @@ func (plusPacket *PLUSPacket) PCFValue() ([]byte, error) {
 	if !plusPacket.XFlag() {
 		return nil, errors.New("No PCF Value present in basic header.")
 	}
-	
+
 	pcfILenIndex := -1
 
 	if plusPacket.header[20] == 0x00 { //2 byte PCF type as usual
@@ -224,7 +224,7 @@ func (plusPacket *PLUSPacket) PCFValue() ([]byte, error) {
 	pcfLen := uint8(plusPacket.header[pcfILenIndex] >> 2)
 	//pcfIntegrity := uint8(plusPacket.header[pcfILenIndex] & 0x03)
 
-	return plusPacket.header[pcfILenIndex+1:pcfILenIndex+1+int(pcfLen)], nil
+	return plusPacket.header[pcfILenIndex+1 : pcfILenIndex+1+int(pcfLen)], nil
 }
 
 // Returns the unprotected part of the PCF value. Should be used read-only, can be used
@@ -233,7 +233,7 @@ func (plusPacket *PLUSPacket) PCFValueUnprotected() ([]byte, error) {
 	if !plusPacket.XFlag() {
 		return nil, errors.New("No PCF Value present in basic header.")
 	}
-	
+
 	pcfILenIndex := -1
 
 	if plusPacket.header[20] == 0x00 { //2 byte PCF type as usual
@@ -259,19 +259,19 @@ func (plusPacket *PLUSPacket) PCFValueUnprotected() ([]byte, error) {
 		offset = int(pcfLen / 4)
 	}
 
-	return plusPacket.header[pcfILenIndex+1+offset:pcfILenIndex+1+int(pcfLen)], nil
+	return plusPacket.header[pcfILenIndex+1+offset : pcfILenIndex+1+int(pcfLen)], nil
 }
 
 // Returns the Header with unprotected fields zeroed out.
 // Safe to modfify as it is a copy.
-func (plusPacket *PLUSPacket) HeaderWithZeroes() ([]byte) {
+func (plusPacket *PLUSPacket) HeaderWithZeroes() []byte {
 	headerCopy := make([]byte, len(plusPacket.header))
 	copy(headerCopy, plusPacket.header)
-	
+
 	if !plusPacket.XFlag() {
 		return headerCopy
 	}
-	
+
 	pcfILenIndex := -1
 
 	if plusPacket.header[20] == 0x00 { //2 byte PCF type as usual
@@ -293,13 +293,13 @@ func (plusPacket *PLUSPacket) HeaderWithZeroes() ([]byte) {
 	} else if pcfIntegrity == PCF_INTEGRITY_ZERO {
 		pcfUnprotectedStartIndex = int(pcfLen)
 	} else if pcfIntegrity == PCF_INTEGRITY_HALF {
-		pcfUnprotectedStartIndex = pcfValueIndex + int(pcfLen / 2)
+		pcfUnprotectedStartIndex = pcfValueIndex + int(pcfLen/2)
 	} else if pcfIntegrity == PCF_INTEGRITY_QUARTER {
-		pcfUnprotectedStartIndex = pcfValueIndex + int(pcfLen / 4)
+		pcfUnprotectedStartIndex = pcfValueIndex + int(pcfLen/4)
 	}
 
-	for i := pcfUnprotectedStartIndex; i < pcfValueIndex + int(pcfLen); i++ {
-		headerCopy[i] = 0x00		
+	for i := pcfUnprotectedStartIndex; i < pcfValueIndex+int(pcfLen); i++ {
+		headerCopy[i] = 0x00
 	}
 
 	return headerCopy
@@ -543,4 +543,3 @@ func NewExtendedPLUSPacket(
 
 	return &plusPacket, nil
 }
-

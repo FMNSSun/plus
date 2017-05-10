@@ -302,4 +302,3 @@ func TestReadPacket1(t *testing.T) {
 		return
 	}
 }
-

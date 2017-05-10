@@ -9,13 +9,13 @@ import "net"
 
 type PLUS struct {
 	connectionStates map[uint64]*PLUSConnState
-	mutex *sync.Mutex
-	packetConn net.PacketConn
-	maxPacketSize int
+	mutex            *sync.Mutex
+	packetConn       net.PacketConn
+	maxPacketSize    int
 }
 
-// Process a PLUS packet. Returns unprotected part of PCF data that
-// needs to be sent back through an encrypted feedback channel or 
+// Processes a PLUS packet. Returns unprotected part of PCF data that
+// needs to be sent back through an encrypted feedback channel or
 // nil when nothing is to send back.
 func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 	plus.mutex.Lock()
@@ -32,7 +32,7 @@ func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 	plus.mutex.Unlock()
 
 	connectionState.mutex.Lock()
-	defer connectionState.mutex.Unlock()	
+	defer connectionState.mutex.Unlock()
 
 	connectionState.pse = plusPacket.PSN()
 
@@ -43,6 +43,7 @@ func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 	return nil, nil
 }
 
+// Updates the CAT of a connection (for connections with changing CATs)
 func (plus *PLUS) UpdateCAT(oldCat uint64, newCat uint64) error {
 	plus.mutex.Lock()
 	defer plus.mutex.Unlock()
@@ -59,6 +60,7 @@ func (plus *PLUS) UpdateCAT(oldCat uint64, newCat uint64) error {
 	return nil
 }
 
+// Returns the connection state assigned to the specified cat.
 func (plus *PLUS) GetPLUSConnState(cat uint64) (*PLUSConnState, error) {
 	plus.mutex.Lock()
 	defer plus.mutex.Unlock()
@@ -70,6 +72,7 @@ func (plus *PLUS) GetPLUSConnState(cat uint64) (*PLUSConnState, error) {
 	return plusConnState, nil
 }
 
+// [internal] handles packets with extended header
 func (plus *PLUS) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 	unprotected, err := plusPacket.PCFValueUnprotected()
 	if err != nil {
@@ -79,7 +82,7 @@ func (plus *PLUS) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, e
 	return unprotected, nil
 }
 
-
+// Reads a PLUS packet from the underlying PacketConn.
 func (plus *PLUS) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
 	buffer := make([]byte, plus.maxPacketSize)
 
@@ -98,6 +101,7 @@ func (plus *PLUS) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
 	return plusPacket, addr, nil
 }
 
+// ReadAndProcessPacket. See `ReadPacket` and `ProcessPacket`.
 func (plus *PLUS) ReadAndProcessPacket() (*packet.PLUSPacket, net.Addr, []byte, error) {
 	plusPacket, addr, err := plus.ReadPacket()
 
@@ -114,6 +118,7 @@ func (plus *PLUS) ReadAndProcessPacket() (*packet.PLUSPacket, net.Addr, []byte, 
 	return plusPacket, addr, feedbackData, nil
 }
 
+// Writes a PLUS packet to the underlying PacketConn.
 func (plus *PLUS) WritePacket(plusPacket *packet.PLUSPacket, addr net.Addr) error {
 	buffer := plusPacket.Buffer()
 	n, err := plus.packetConn.WriteTo(buffer, addr)
@@ -131,31 +136,31 @@ func (plus *PLUS) WritePacket(plusPacket *packet.PLUSPacket, addr net.Addr) erro
 
 /* /type PLUS */
 
-
 /* type PLUSConnState */
 
 type PLUSConnState struct {
-	cat	uint64
-	psn uint32
-	pse uint32
-	defaultLFlag bool
-	defaultRFlag bool
-	defaultSFlag bool
-	pcfRequests []pcfRequest
+	cat            uint64
+	psn            uint32
+	pse            uint32
+	defaultLFlag   bool
+	defaultRFlag   bool
+	defaultSFlag   bool
+	pcfRequests    []pcfRequest
 	pcfInsertIndex int
-	pcfReadIndex int
-	pcfElements int
-	mutex *sync.RWMutex
+	pcfReadIndex   int
+	pcfElements    int
+	mutex          *sync.RWMutex
 }
 
 type pcfRequest struct {
-	pcfType uint16
-	pcfValue []byte
+	pcfType      uint16
+	pcfValue     []byte
 	pcfIntegrity uint8
 }
 
 const kMaxQueuedPCFRequests int = 10
 
+// Creates a new connection state.
 func NewPLUSConnState(cat uint64) *PLUSConnState {
 	var plusConnState PLUSConnState
 	plusConnState.cat = cat
@@ -169,6 +174,7 @@ func NewPLUSConnState(cat uint64) *PLUSConnState {
 	return &plusConnState
 }
 
+// Changes the CAt
 func (plusConnState *PLUSConnState) SetCAT(newCat uint64) {
 	plusConnState.mutex.Lock()
 	defer plusConnState.mutex.Unlock()
@@ -176,11 +182,15 @@ func (plusConnState *PLUSConnState) SetCAT(newCat uint64) {
 	plusConnState.cat = newCat
 }
 
+// Adds received PCF feedback data
 func (plusConnState *PLUSConnState) AddPCFFeedback(feedbackData []byte) error {
 	//TODO
 	return nil
 }
 
+// Prepares the next packet to be sent by creating an empty (no set payload) PLUS packet
+// and returns this. The upper layer should then set the payload of the packet and hand it over
+// to `WritePacket`.
 func (plusConnState *PLUSConnState) PrepareNextPacket() (*packet.PLUSPacket, error) {
 	plusConnState.mutex.Lock()
 	defer plusConnState.mutex.Unlock()
@@ -196,16 +206,16 @@ func (plusConnState *PLUSConnState) PrepareNextPacket() (*packet.PLUSPacket, err
 	if ok {
 		// Pending PCF, send extended packet
 		plusPacket, err = packet.NewExtendedPLUSPacket(
-				plusConnState.defaultLFlag,
-				plusConnState.defaultRFlag,
-				plusConnState.defaultSFlag,
-				plusConnState.cat,
-				plusConnState.psn,
-				plusConnState.pse,
-				pcfType,
-				pcfIntegrity,
-				pcfValue,
-				nil)
+			plusConnState.defaultLFlag,
+			plusConnState.defaultRFlag,
+			plusConnState.defaultSFlag,
+			plusConnState.cat,
+			plusConnState.psn,
+			plusConnState.pse,
+			pcfType,
+			pcfIntegrity,
+			pcfValue,
+			nil)
 
 		if err != nil {
 			return nil, err
@@ -213,18 +223,19 @@ func (plusConnState *PLUSConnState) PrepareNextPacket() (*packet.PLUSPacket, err
 	} else {
 		// No pending PCF, send basic packet
 		plusPacket = packet.NewBasicPLUSPacket(
-				plusConnState.defaultLFlag,
-				plusConnState.defaultRFlag,
-				plusConnState.defaultSFlag,
-				plusConnState.cat,
-				plusConnState.psn,
-				plusConnState.pse,
-				nil)
+			plusConnState.defaultLFlag,
+			plusConnState.defaultRFlag,
+			plusConnState.defaultSFlag,
+			plusConnState.cat,
+			plusConnState.psn,
+			plusConnState.pse,
+			nil)
 	}
 
 	return plusPacket, nil
 }
 
+// Queues a PCF request.
 func (plusConnState *PLUSConnState) QueuePCFRequest(pcfType uint16, pcfIntegrity uint8, pcfValue []byte) error {
 	plusConnState.mutex.Lock()
 	defer plusConnState.mutex.Unlock()
@@ -233,14 +244,15 @@ func (plusConnState *PLUSConnState) QueuePCFRequest(pcfType uint16, pcfIntegrity
 		return fmt.Errorf("Buffer is full!")
 	}
 
-	plusConnState.pcfRequests[plusConnState.pcfInsertIndex] = pcfRequest { pcfType : pcfType, pcfValue : pcfValue, pcfIntegrity : pcfIntegrity }
-	plusConnState.pcfInsertIndex = (plusConnState.pcfInsertIndex + 1 ) % kMaxQueuedPCFRequests
+	plusConnState.pcfRequests[plusConnState.pcfInsertIndex] = pcfRequest{pcfType: pcfType, pcfValue: pcfValue, pcfIntegrity: pcfIntegrity}
+	plusConnState.pcfInsertIndex = (plusConnState.pcfInsertIndex + 1) % kMaxQueuedPCFRequests
 	plusConnState.pcfElements++
 
 	return nil
 }
 
-func (plusConnState *PLUSConnState) GetPCFRequest() (uint16, uint8,  []byte, bool) {
+// Returns and unqueues a PCF request.
+func (plusConnState *PLUSConnState) GetPCFRequest() (uint16, uint8, []byte, bool) {
 	plusConnState.mutex.Lock()
 	defer plusConnState.mutex.Unlock()
 
@@ -256,5 +268,3 @@ func (plusConnState *PLUSConnState) GetPCFRequest() (uint16, uint8,  []byte, boo
 }
 
 /* /type PLUSConnState */
-
-
