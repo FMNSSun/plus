@@ -7,17 +7,30 @@ import "net"
 
 /* type PLUS */
 
-type PLUS struct {
+type PLUSConnManager struct {
 	connectionStates map[uint64]*PLUSConnState
 	mutex            *sync.Mutex
 	packetConn       net.PacketConn
 	maxPacketSize    int
 }
 
+func NewPLUSConnManager(packetConn net.PacketConn) *PLUSConnManager {
+	plusConnManager := PLUSConnManager { 
+	               connectionStates : make(map[uint64]*PLUSConnState),
+	               mutex : &sync.Mutex{},
+	               maxPacketSize : 8192,
+	               packetConn : packetConn }
+	return &plusConnManager
+}
+
+func (plus *PLUSConnManager) LocalAddr() net.Addr {
+	return plus.packetConn.LocalAddr()
+}
+
 // Processes a PLUS packet. Returns unprotected part of PCF data that
 // needs to be sent back through an encrypted feedback channel or
 // nil when nothing is to send back.
-func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
+func (plus *PLUSConnManager) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 	plus.mutex.Lock()
 
 	cat := plusPacket.CAT()
@@ -44,7 +57,7 @@ func (plus *PLUS) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 }
 
 // Updates the CAT of a connection (for connections with changing CATs)
-func (plus *PLUS) UpdateCAT(oldCat uint64, newCat uint64) error {
+func (plus *PLUSConnManager) UpdateCAT(oldCat uint64, newCat uint64) error {
 	plus.mutex.Lock()
 	defer plus.mutex.Unlock()
 
@@ -61,7 +74,7 @@ func (plus *PLUS) UpdateCAT(oldCat uint64, newCat uint64) error {
 }
 
 // Returns the connection state assigned to the specified cat.
-func (plus *PLUS) GetPLUSConnState(cat uint64) (*PLUSConnState, error) {
+func (plus *PLUSConnManager) GetPLUSConnState(cat uint64) (*PLUSConnState, error) {
 	plus.mutex.Lock()
 	defer plus.mutex.Unlock()
 
@@ -73,7 +86,7 @@ func (plus *PLUS) GetPLUSConnState(cat uint64) (*PLUSConnState, error) {
 }
 
 // [internal] handles packets with extended header
-func (plus *PLUS) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
+func (plus *PLUSConnManager) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 	unprotected, err := plusPacket.PCFValueUnprotected()
 	if err != nil {
 		return nil, nil
@@ -83,7 +96,7 @@ func (plus *PLUS) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, e
 }
 
 // Reads a PLUS packet from the underlying PacketConn.
-func (plus *PLUS) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
+func (plus *PLUSConnManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
 	buffer := make([]byte, plus.maxPacketSize)
 
 	_, addr, err := plus.packetConn.ReadFrom(buffer)
@@ -102,7 +115,7 @@ func (plus *PLUS) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
 }
 
 // ReadAndProcessPacket. See `ReadPacket` and `ProcessPacket`.
-func (plus *PLUS) ReadAndProcessPacket() (*packet.PLUSPacket, net.Addr, []byte, error) {
+func (plus *PLUSConnManager) ReadAndProcessPacket() (*packet.PLUSPacket, net.Addr, []byte, error) {
 	plusPacket, addr, err := plus.ReadPacket()
 
 	if err != nil {
@@ -119,7 +132,7 @@ func (plus *PLUS) ReadAndProcessPacket() (*packet.PLUSPacket, net.Addr, []byte, 
 }
 
 // Writes a PLUS packet to the underlying PacketConn.
-func (plus *PLUS) WritePacket(plusPacket *packet.PLUSPacket, addr net.Addr) error {
+func (plus *PLUSConnManager) WritePacket(plusPacket *packet.PLUSPacket, addr net.Addr) error {
 	buffer := plusPacket.Buffer()
 	n, err := plus.packetConn.WriteTo(buffer, addr)
 
