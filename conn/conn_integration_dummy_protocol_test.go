@@ -13,7 +13,7 @@ type dummyProtocol_CryptoContext struct {
 	key byte
 }
 
-func (ctx *dummyProtocol_CryptoContext) SignAndEncrypt(conn *PLUSConn, header []byte, data []byte) ([]byte, error) {
+func (ctx *dummyProtocol_CryptoContext) EncryptAndProtect(header []byte, data []byte) ([]byte, error) {
 	fmt.Println("SignAndEncrypt")
 	encrypted := make([]byte, len(data))
 	for i := range data {
@@ -22,7 +22,7 @@ func (ctx *dummyProtocol_CryptoContext) SignAndEncrypt(conn *PLUSConn, header []
 	return encrypted, nil
 }
 
-func (ctx *dummyProtocol_CryptoContext) ValidateAndDecrypt(conn *PLUSConn, header []byte, data []byte) ([]byte, error) {
+func (ctx *dummyProtocol_CryptoContext) DecryptAndValidate(header []byte, data []byte) ([]byte, error) {
 	fmt.Println("ValidateAndDecrypt")
 	decrypted := make([]byte, len(data))
 	for i := range data {
@@ -38,7 +38,7 @@ func dummyProtocol_initConn(conn *PLUSConn) error {
 }
 
 func dummyProtocol_SetupServer(t *testing.T) *PLUSListener {
-	listener, err := ListenPLUSAware("127.0.0.1:15000", dummyProtocol_initConn)
+	listener, err := ListenPLUSAware("127.0.0.1:15000", true, dummyProtocol_initConn)
 
 	if err != nil {
 		t.Errorf("Failed to ListenPLUS: %s", err.Error())

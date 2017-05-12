@@ -30,6 +30,7 @@ type PLUSListener struct {
 	serverMode     bool
 	logger         *log.Logger
 	initConn       func(*PLUSConn) error
+	doConnectionMultiplexing bool
 }
 
 const maxPacketSize int = 4096
@@ -82,17 +83,17 @@ func StateToString(state uint16) string {
 }
 
 // Create a PLUS server listening on laddr
-func ListenPLUSAware(laddr string, initConn func(*PLUSConn) error) (*PLUSListener, error) {
+func ListenPLUSAware(laddr string, doConnectionMultiplexing bool, initConn func(*PLUSConn) error) (*PLUSListener, error) {
 	packetConn, err := net.ListenPacket("udp", laddr)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return ListenPLUSWithPacketConn(packetConn, initConn)
+	return ListenPLUSWithPacketConn(packetConn, doConnectionMultiplexing, initConn)
 }
 
-func ListenPLUSWithPacketConn(packetConn net.PacketConn, initConn func(*PLUSConn) error) (*PLUSListener, error) {
+func ListenPLUSWithPacketConn(packetConn net.PacketConn, doConnectionMultiplexing bool, initConn func(*PLUSConn) error) (*PLUSListener, error) {
 	var plusListener PLUSListener
 	plusListener.logger = log.New(os.Stdout, "Listener (true): ", log.Lshortfile)
 	plusListener.packetConn = packetConn
@@ -100,6 +101,7 @@ func ListenPLUSWithPacketConn(packetConn net.PacketConn, initConn func(*PLUSConn
 	plusListener.connections = make(map[uint64]*PLUSConn)
 	plusListener.newConnections = make(chan *PLUSConn)
 	plusListener.initConn = initConn
+	plusListener.doConnectionMultiplexing = doConnectionMultiplexing
 
 	go plusListener.listen()
 
@@ -107,9 +109,11 @@ func ListenPLUSWithPacketConn(packetConn net.PacketConn, initConn func(*PLUSConn
 }
 
 // Create a PLUS server listening on laddr
-func ListenPLUS(laddr string) (*PLUSListener, error) {
-	return ListenPLUSAware(laddr, nil)
+func ListenPLUS(laddr string, doConnectionMultiplexing bool) (*PLUSListener, error) {
+	return ListenPLUSAware(laddr, doConnectionMultiplexing, nil)
 }
+
+
 
 // This listens on the internal packet connection for new packets, tries to
 // parse them as a PLUS packet and creates new connection if packets with
@@ -131,16 +135,22 @@ func (listener *PLUSListener) listen() {
 		} else {
 			plusPacket, err := packet.NewPLUSPacket(buffer[:n])
 
+			cat := plusPacket.CAT()
+
+			if !listener.doConnectionMultiplexing {
+				cat = 0 //if no multiplexing shall be done cat is virtually zero
+			}
+
 			if err != nil {
 				// Drop packets that aren't PLUS packets
 				listener.logger.Print("Parsing packet failed.")
 			} else {
 
-				plusConnection, ok := listener.connections[plusPacket.CAT()]
+				plusConnection, ok := listener.connections[cat]
 
 				if !ok {
 					if listener.serverMode {
-						plusConnection = listener.addConnection(plusPacket.CAT())
+						plusConnection = listener.addConnection(plusPacket.CAT()) //actual cat, not potentially zeroed cat
 					} else {
 						// Invalid CAT. Drop packet.
 						listener.logger.Print("Bogus packet in non-servermode received")
@@ -186,7 +196,11 @@ func (listener *PLUSListener) addConnection(cat uint64) *PLUSConn {
 	plusConnection.logger = log.New(os.Stdout, fmt.Sprintf("Connection %d: ", cat), log.Lshortfile)
 	plusConnection.dropInvalidPackets = true
 
-	listener.connections[cat] = &plusConnection
+	if listener.doConnectionMultiplexing {
+		listener.connections[cat] = &plusConnection
+	} else {
+		listener.connections[0] = &plusConnection
+	}
 
 	plusConnection.mutex.Unlock()
 

@@ -27,18 +27,47 @@ type PLUSConn struct {
 	mutex              *sync.RWMutex
 	observer           PLUSObserver
 	cryptoContext      PLUSCryptoContext
+	feedbackChannel    PLUSFeedbackChannel
 	dropInvalidPackets bool
+	pendingPCFRequests chan *PCFRequest
+	pcfRequests		   map[uint16]*PCFRequest
+}
+
+type PCFRequest struct {
+	PCFType		uint16
+	PCFIntegrity uint8
+	PCFValue	[]byte
+	result		chan *PCFResult
+}
+
+type PCFResult struct {
+	PCFType		uint16
+	Value		[]byte
+}
+
+type PLUSFeedbackChannel interface {
+	// Called when the upper layer needs to send data back through
+	// an encrypted feedback channel.
+	SendFeedback([]byte)
 }
 
 type PLUSObserver interface {
-	OnStateChanged(*PLUSConn, uint16)
-	OnBasicPacketReceived(*PLUSConn, *packet.PLUSPacket, error)
-	OnExtendedPacketReceived(*PLUSConn, *packet.PLUSPacket, error)
+	// Called when the state of the connection changes
+	OnStateChanged(uint16)
+
+	// Called when a packet with a basic header was received (packet is already decrypted unless requested otherwise)
+	OnBasicPacketReceived( *packet.PLUSPacket, error)
+
+	// Called when a packet with an extended header was received (packet is already decrypted unless requested otherwise)
+	OnExtendedPacketReceived(*packet.PLUSPacket, error)
 }
 
 type PLUSCryptoContext interface {
-	SignAndEncrypt(*PLUSConn, []byte, []byte) ([]byte, error)
-	ValidateAndDecrypt(*PLUSConn, []byte, []byte) ([]byte, error)
+	// Encrypt and protect (not necessarily in that order)
+	EncryptAndProtect(plusPseudoHeader []byte, payload []byte) ([]byte, error)
+
+	// Decrypt and validate (not necessarily in that order)
+	DecryptAndValidate(plusPseudoHeader []byte, payload []byte) ([]byte, error)
 }
 
 // Connect to a PLUS server. laddr is the local address and remoteAddr is the
@@ -66,6 +95,7 @@ func DialPLUSWithPacketConn(packetConn net.PacketConn, remoteAddr net.Addr, init
 	plusListener.serverMode = false
 	plusListener.connections = make(map[uint64]*PLUSConn)
 	plusListener.initConn = initConn
+	plusListener.doConnectionMultiplexing = true
 
 	// FIXME: Make this random.
 	randomCAT := uint64(4) //totally random for now
@@ -122,9 +152,7 @@ func (conn *PLUSConn) setState(newState uint16) {
 
 	// Notify observer, if any
 	if conn.observer != nil {
-		if conn.observer.OnStateChanged != nil {
-			conn.observer.OnStateChanged(conn, conn.state)
-		}
+			conn.observer.OnStateChanged(conn.state)
 	}
 }
 
@@ -229,6 +257,35 @@ func (conn *PLUSConn) SendPacket(plusPacket *packet.PLUSPacket) error {
 	return conn.sendPacket(plusPacket)
 }
 
+// Perform a PCF request. 
+func (conn *PLUSConn) PCFRequest(req *PCFRequest) (*PCFResult, error) {
+	conn.mutex.Lock()
+
+	req.result = make(chan *PCFResult, 1)
+
+	if conn.pendingPCFRequests == nil {
+		conn.pendingPCFRequests = make(chan *PCFRequest, 1)
+	}
+
+	if conn.pcfRequests == nil {
+		conn.pcfRequests = make(map[uint16]*PCFRequest)
+	}
+
+	_, ok := conn.pcfRequests[req.PCFType]
+	if ok {
+		conn.mutex.Unlock()
+		return nil, fmt.Errorf("Request with type %d already present!", req.PCFType)
+	}
+
+	conn.pcfRequests[req.PCFType] = req
+
+	conn.mutex.Unlock()
+
+	conn.pendingPCFRequests <- req
+
+	return <- req.result, nil
+}
+
 // Send a packet. This function will send the bytes of the packet through
 // the underlying packet conn to the connections' current remote address.
 // Packet will be signed and encrypted.
@@ -322,6 +379,15 @@ func (conn *PLUSConn) onNewPacketReceived(plusPacket *packet.PLUSPacket, remoteA
 
 	conn.updateRemoteAddr(remoteAddr)
 
+	// Do we need to send PCF feedback?
+	pcfValueUnprotected, _ := plusPacket.PCFValueUnprotected()
+	if pcfValueUnprotected != nil {
+		//yep
+		if conn.feedbackChannel != nil {
+			conn.feedbackChannel.SendFeedback(pcfValueUnprotected)
+		}
+	}
+
 	// Update PSE
 	conn.pse = plusPacket.PSN()
 
@@ -338,9 +404,9 @@ func (conn *PLUSConn) notifyObservers(plusPacket *packet.PLUSPacket, err error) 
 	// Notify observers if any
 	if conn.observer != nil {
 		if plusPacket.XFlag() {
-			conn.observer.OnExtendedPacketReceived(conn, plusPacket, err)
+			conn.observer.OnExtendedPacketReceived(plusPacket, err)
 		} else {
-			conn.observer.OnBasicPacketReceived(conn, plusPacket, err)
+			conn.observer.OnBasicPacketReceived(plusPacket, err)
 		}
 	}
 }
@@ -433,7 +499,7 @@ func (conn *PLUSConn) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
 }
 
 // Validate & Decrypt the packet
-func (conn *PLUSConn) ValidateAndDecrypt(plusPacket *packet.PLUSPacket) error {
+func (conn *PLUSConn) DecryptAndValidate(plusPacket *packet.PLUSPacket) error {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
 
@@ -441,7 +507,7 @@ func (conn *PLUSConn) ValidateAndDecrypt(plusPacket *packet.PLUSPacket) error {
 }
 
 // Sign & Encrypt the packet
-func (conn *PLUSConn) SignAndEncrypt(plusPacket *packet.PLUSPacket) (int, error) {
+func (conn *PLUSConn) EncryptAndProtect(plusPacket *packet.PLUSPacket) (int, error) {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
 
@@ -451,7 +517,7 @@ func (conn *PLUSConn) SignAndEncrypt(plusPacket *packet.PLUSPacket) (int, error)
 // Validate & Decrypt the packet
 func (conn *PLUSConn) validateAndDecrypt(plusPacket *packet.PLUSPacket) error {
 	if conn.cryptoContext != nil {
-		payload, err := conn.cryptoContext.ValidateAndDecrypt(conn, plusPacket.Header(), plusPacket.Payload())
+		payload, err := conn.cryptoContext.DecryptAndValidate(plusPacket.HeaderWithZeroes(), plusPacket.Payload())
 
 		if err != nil {
 			return err
@@ -465,7 +531,7 @@ func (conn *PLUSConn) validateAndDecrypt(plusPacket *packet.PLUSPacket) error {
 // Sign & Encrypt the packet.
 func (conn *PLUSConn) signAndEncrypt(plusPacket *packet.PLUSPacket) (int, error) {
 	if conn.cryptoContext != nil {
-		payload, err := conn.cryptoContext.SignAndEncrypt(conn, plusPacket.Header(), plusPacket.Payload())
+		payload, err := conn.cryptoContext.EncryptAndProtect(plusPacket.HeaderWithZeroes(), plusPacket.Payload())
 
 		if err != nil {
 			return 0, err
@@ -485,8 +551,22 @@ func (conn *PLUSConn) sendData(b []byte) (int, error) {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
 
-	plusPacket := packet.NewBasicPLUSPacket(conn.defaultLFlag, conn.defaultLFlag, false,
-		conn.cat, conn.psn, conn.pse, b)
+	var plusPacket *packet.PLUSPacket
+	var err error
+
+	select {
+	case req := <- conn.pendingPCFRequests:
+		plusPacket, err = packet.NewExtendedPLUSPacket(conn.defaultLFlag, conn.defaultRFlag, false,
+			conn.cat, conn.psn, conn.pse, req.PCFType, req.PCFIntegrity, req.PCFValue, b)
+
+		if err != nil {
+			return 0, err
+		}
+
+	default:
+		plusPacket = packet.NewBasicPLUSPacket(conn.defaultLFlag, conn.defaultRFlag, false,
+			conn.cat, conn.psn, conn.pse, b)
+	}
 
 	conn.psn++
 
@@ -529,6 +609,27 @@ func (conn *PLUSConn) WriteWithFlags(b []byte, lFlag bool, rFlag bool, sFlag boo
 	return conn.sendDataWithFlags(b, lFlag, rFlag, sFlag)
 }
 
+// Process feedback
+func (conn *PLUSConn) ProcessFeedback(feedbackData []byte) error {
+	if len(feedbackData) < 2 {
+		return fmt.Errorf("Expected at least two bytes but got %d bytes!", len(feedbackData))
+	}
+
+	pcfType := uint16(int(feedbackData[1]) << 8 | int(feedbackData[0]))
+
+	conn.mutex.Lock()
+	defer conn.mutex.Unlock()
+	req, ok := conn.pcfRequests[pcfType]
+
+	if !ok {
+		return fmt.Errorf("Unexpected feedback for type %d", pcfType)
+	}
+
+	req.result <- &PCFResult { Value: feedbackData, PCFType: pcfType } 
+
+	return nil
+}
+
 // TODO
 func (*PLUSConn) SetDeadline(t time.Time) error {
 	return nil
@@ -542,4 +643,18 @@ func (*PLUSConn) SetReadDeadline(t time.Time) error {
 // TODO
 func (*PLUSConn) SetWriteDeadline(t time.Time) error {
 	return nil
+}
+
+/* PCF stuff */
+
+func (conn *PLUSConn) GetHopCount() (int, error) {
+	buf := []byte{0x00,0x00}
+	req := &PCFRequest { PCFType: 0x01, PCFIntegrity: packet.PCF_INTEGRITY_FULL, PCFValue: buf }
+	result, err := conn.PCFRequest(req)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return int(result.Value[1]) << 8 | int(result.Value[0]), nil
 }

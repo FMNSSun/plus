@@ -11,7 +11,7 @@ import "bytes"
 import "fmt"
 
 func setupServer(t *testing.T) *PLUSListener {
-	listener, err := ListenPLUS("127.0.0.1:15000")
+	listener, err := ListenPLUS("127.0.0.1:15000", true)
 
 	if err != nil {
 		t.Errorf("Failed to ListenPLUS: %s", err.Error())
