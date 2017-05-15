@@ -3,6 +3,7 @@ package packet
 import "errors"
 import "fmt"
 import "encoding/binary"
+import "math"
 
 // Utility functions to read/create/write PLUS
 // packets.
@@ -252,11 +253,11 @@ func (plusPacket *PLUSPacket) PCFValueUnprotected() ([]byte, error) {
 	if pcfIntegrity == PCF_INTEGRITY_FULL {
 		return nil, nil
 	} else if pcfIntegrity == PCF_INTEGRITY_ZERO {
-		offset = int(pcfLen)
+		offset = 0
 	} else if pcfIntegrity == PCF_INTEGRITY_HALF {
-		offset = int(pcfLen / 2)
+		offset = int(math.Ceil(float64(pcfLen)/float64(2)))
 	} else if pcfIntegrity == PCF_INTEGRITY_QUARTER {
-		offset = int(pcfLen / 4)
+		offset = int(math.Ceil(float64(pcfLen)/float64(4)))
 	}
 
 	return plusPacket.header[pcfILenIndex+1+offset : pcfILenIndex+1+int(pcfLen)], nil
@@ -293,9 +294,9 @@ func (plusPacket *PLUSPacket) HeaderWithZeroes() []byte {
 	} else if pcfIntegrity == PCF_INTEGRITY_ZERO {
 		pcfUnprotectedStartIndex = int(pcfLen)
 	} else if pcfIntegrity == PCF_INTEGRITY_HALF {
-		pcfUnprotectedStartIndex = pcfValueIndex + int(pcfLen/2)
+		pcfUnprotectedStartIndex = pcfValueIndex + int(math.Ceil(float64(pcfLen)/float64(2)))
 	} else if pcfIntegrity == PCF_INTEGRITY_QUARTER {
-		pcfUnprotectedStartIndex = pcfValueIndex + int(pcfLen/4)
+		pcfUnprotectedStartIndex = pcfValueIndex + int(math.Ceil(float64(pcfLen)/float64(4)))
 	}
 
 	for i := pcfUnprotectedStartIndex; i < pcfValueIndex+int(pcfLen); i++ {
@@ -525,7 +526,7 @@ func NewExtendedPLUSPacket(
 		if ulen(pcfValue) == 0 {
 			pcfIntegrity = 0 //spec says if len is 0 integrity is unspecified and must be set to zero
 		}
-		fmt.Println(pcfIntegrity)
+
 		plusPacket.header[BASIC_HEADER_LEN+ofs] = (uint8(ulen(pcfValue)) << 2) | pcfIntegrity
 	}
 

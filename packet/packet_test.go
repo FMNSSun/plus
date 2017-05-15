@@ -16,6 +16,182 @@ func TestByteOrder(t *testing.T) {
 	}
 }
 
+func TestHeader(t *testing.T) {
+	packet := []byte{
+		0xD8, 0x00, 0x7F, 0xFF, // the usual, magic + flags (all set) [0-3]
+		0x12, 0x34, 0x56, 0x78, // cat								  [4-7]
+		0x12, 0x12, 0x12, 0x12, // also cat                           [8-11]
+		0x13, 0x11, 0x11, 0x11, // psn                                [12-15]
+		0x11, 0x11, 0x11, 0x13, // pse                                [15-19]
+		0x13, //PCF Type := 0x13                                      [20]
+		(0x06 << 2) | (PCF_INTEGRITY_QUARTER), //PCF Len = 6, PCF I   [21]
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, //PCF Value bytes
+		0x00, 0x00, 0x00, 0x00} // 4 bytes payload
+
+	plusPacket, err := NewPLUSPacket(packet)
+	
+	if err != nil {
+		t.Errorf("Error but expected none: %s", err.Error())
+		return
+	}
+
+	if !bytes.Equal(plusPacket.Buffer(), packet) {
+		fmt.Println(plusPacket.Buffer())
+		fmt.Println(packet)
+		t.Errorf("Buffers don't match!")
+		return
+	}
+
+	header := []byte {
+		0xD8, 0x00, 0x7F, 0xFF, // the usual, magic + flags (all set) [0-3]
+		0x12, 0x34, 0x56, 0x78, // cat								  [4-7]
+		0x12, 0x12, 0x12, 0x12, // also cat                           [8-11]
+		0x13, 0x11, 0x11, 0x11, // psn                                [12-15]
+		0x11, 0x11, 0x11, 0x13, // pse                                [15-19]
+		0x13, //PCF Type := 0x13                                      [20]
+		(0x06 << 2) | (PCF_INTEGRITY_QUARTER), //PCF Len = 6, PCF I   [21]
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06} // PCF value bytes (6)
+
+	if !bytes.Equal(plusPacket.Header(), header) {
+		fmt.Println(plusPacket.Header())
+		fmt.Println(header)
+		t.Errorf("Header is broken!")
+		return
+	}
+}
+
+func TestHeaderWithZeroes(t *testing.T) {
+	packet := []byte{
+		0xD8, 0x00, 0x7F, 0xFF, // the usual, magic + flags (all set) [0-3]
+		0x12, 0x34, 0x56, 0x78, // cat								  [4-7]
+		0x12, 0x12, 0x12, 0x12, // also cat                           [8-11]
+		0x13, 0x11, 0x11, 0x11, // psn                                [12-15]
+		0x11, 0x11, 0x11, 0x13, // pse                                [15-19]
+		0x13, //PCF Type := 0x13                                      [20]
+		(0x06 << 2) | (PCF_INTEGRITY_QUARTER), //PCF Len = 6, PCF I   [21]
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, //PCF Value bytes
+		0x00, 0x00, 0x00, 0x00} // 4 bytes payload
+
+	plusPacket, err := NewPLUSPacket(packet)
+	
+	if err != nil {
+		t.Errorf("Error but expected none: %s", err.Error())
+		return
+	}
+
+	if !bytes.Equal(plusPacket.Buffer(), packet) {
+		fmt.Println(plusPacket.Buffer())
+		fmt.Println(packet)
+		t.Errorf("Buffers don't match!")
+		return
+	}
+
+	headerWithZeroes := []byte {
+		0xD8, 0x00, 0x7F, 0xFF, // the usual, magic + flags (all set) [0-3]
+		0x12, 0x34, 0x56, 0x78, // cat								  [4-7]
+		0x12, 0x12, 0x12, 0x12, // also cat                           [8-11]
+		0x13, 0x11, 0x11, 0x11, // psn                                [12-15]
+		0x11, 0x11, 0x11, 0x13, // pse                                [15-19]
+		0x13, //PCF Type := 0x13                                      [20]
+		(0x06 << 2) | (PCF_INTEGRITY_QUARTER), //PCF Len = 6, PCF I   [21]
+		0x01, 0x02, 0x00, 0x00, 0x00, 0x00} //PCF Value bytes (6/4=1.5~=2 first two are protected, rest isn't)
+
+	if !bytes.Equal(plusPacket.HeaderWithZeroes(), headerWithZeroes) {
+		fmt.Println(plusPacket.HeaderWithZeroes())
+		fmt.Println(headerWithZeroes)
+		t.Errorf("HeaderWithZeroes is broken!")
+		return
+	}
+}
+
+func TestPacketPCFValue(t *testing.T) {
+	packet := []byte{
+		0xD8, 0x00, 0x7F, 0xFF, // the usual, magic + flags (all set) [0-3]
+		0x12, 0x34, 0x56, 0x78, // cat								  [4-7]
+		0x12, 0x12, 0x12, 0x12, // also cat                           [8-11]
+		0x13, 0x11, 0x11, 0x11, // psn                                [12-15]
+		0x11, 0x11, 0x11, 0x13, // pse                                [15-19]
+		0x13, //PCF Type := 0x13                                      [20]
+		(0x06 << 2) | (0x00), //PCF Len = 6, PCF I = 0x00 = (unprotected) [21]
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, //PCF Value bytes
+		0x00, 0x00, 0x00, 0x00} // 4 bytes payload
+
+	plusPacket, err := NewPLUSPacket(packet)
+	
+	if err != nil {
+		t.Errorf("Error but expected none: %s", err.Error())
+		return
+	}
+
+	if !bytes.Equal(plusPacket.Buffer(), packet) {
+		fmt.Println(plusPacket.Buffer())
+		fmt.Println(packet)
+		t.Errorf("Buffers don't match!")
+		return
+	}
+
+	pcfValue := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
+
+	res, err := plusPacket.PCFValue()
+
+	if err != nil {
+		t.Errorf("Error but expected none: %s", err.Error())
+		return
+	}
+
+	if !bytes.Equal(res, pcfValue) {
+		fmt.Println(res)
+		fmt.Println(pcfValue)
+		t.Errorf("PCFValue does not match!")
+		return
+	}
+
+	// unprotected part
+	pcfValueUnprotected := []byte{0x01, 0x02, 0x03,
+	                              0x04, 0x05, 0x06}
+
+	res, err = plusPacket.PCFValueUnprotected()
+
+	if err != nil {
+		t.Errorf("Error but expected none: %s", err.Error())
+		return
+	}
+
+	if !bytes.Equal(res, pcfValueUnprotected) {
+		fmt.Println(res)
+		fmt.Println(pcfValueUnprotected)
+		t.Errorf("PCFValueUnprotected is broken!")
+		return
+	}
+
+	// Set PCF Integrity to quarter
+	packet[21] = (0x06 << 2) | PCF_INTEGRITY_QUARTER
+	
+	plusPacket, err = NewPLUSPacket(packet)
+	
+	if err != nil {
+		t.Errorf("Error but expected none: %s", err.Error())
+		return
+	}
+
+	// First two bytes should be protected now 
+	pcfValueUnprotected= []byte{0x03, 0x04, 0x05, 0x06}
+
+	res, err = plusPacket.PCFValueUnprotected()
+
+	if err != nil {
+		t.Errorf("Error but expected none: %s", err.Error())
+		return
+	}
+
+	if !bytes.Equal(res, pcfValueUnprotected) {
+		fmt.Println(res)
+		fmt.Println(pcfValueUnprotected)
+		t.Errorf("PCFValueUnprotected is broken!")
+		return
+	}
+}
+
 // Create a packet through the New... and compare
 // the result with a handcrafted buffer
 func TestSerializePacket2(t *testing.T) {
