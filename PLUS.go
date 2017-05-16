@@ -12,6 +12,8 @@ type PLUSConnManager struct {
 	mutex            *sync.Mutex
 	packetConn       net.PacketConn
 	maxPacketSize    int
+    clientMode       bool
+    clientCAT        uint64
 }
 
 func NewPLUSConnManager(packetConn net.PacketConn) *PLUSConnManager {
@@ -25,6 +27,19 @@ func NewPLUSConnManager(packetConn net.PacketConn) *PLUSConnManager {
     return plusConnManager
 }
 
+func NewPLUSConnManagerClient(packetConn net.PacketConn, plusConnState *PLUSConnState) *PLUSConnManager {
+    plusConnManager := &PLUSConnManager {
+        connectionStates : make(map[uint64]*PLUSConnState),
+        mutex: &sync.Mutex{},
+        packetConn: packetConn,
+        maxPacketSize: 8192,
+        clientMode: true,
+        clientCAT: plusConnState.cat,
+    }
+    
+    return plusConnManager
+}
+
 // Processes a PLUS packet. Returns unprotected part of PCF data that
 // needs to be sent back through an encrypted feedback channel or
 // nil when nothing is to send back.
@@ -32,12 +47,19 @@ func (plus *PLUSConnManager) ProcessPacket(plusPacket *packet.PLUSPacket, remote
 	plus.mutex.Lock()
 
 	cat := plusPacket.CAT()
+    
+    if plus.clientMode {
+        if cat != plus.clientCAT {
+            return nil, nil, fmt.Errorf("Expected CAT := %d but got %d", plus.clientCAT, cat)
+        }
+    }
 
 	connectionState, ok := plus.connectionStates[cat]
 
 	if !ok {
 		// New connection
-		connectionState := NewPLUSConnState(cat, plus.packetConn, remoteAddr)
+        fmt.Println("New connection", plus.clientMode)
+		connectionState = NewPLUSConnState(cat, plus.packetConn, remoteAddr)
 		plus.connectionStates[cat] = connectionState
 	}
 	plus.mutex.Unlock()
@@ -54,6 +76,7 @@ func (plus *PLUSConnManager) ProcessPacket(plusPacket *packet.PLUSPacket, remote
 
 	return connectionState, nil, nil
 }
+
 
 // Updates the CAT of a connection (for connections with changing CATs)
 func (plus *PLUSConnManager) UpdateCAT(oldCat uint64, newCat uint64) error {
@@ -98,13 +121,13 @@ func (plus *PLUSConnManager) handleExtendedPacket(plusPacket *packet.PLUSPacket)
 func (plus *PLUSConnManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
 	buffer := make([]byte, plus.maxPacketSize)
 
-	_, addr, err := plus.packetConn.ReadFrom(buffer)
+	n, addr, err := plus.packetConn.ReadFrom(buffer)
 
 	if err != nil {
 		return nil, addr, err
 	}
 
-	plusPacket, err := packet.NewPLUSPacket(buffer)
+	plusPacket, err := packet.NewPLUSPacket(buffer[:n])
 
 	if err != nil {
 		return nil, addr, err
