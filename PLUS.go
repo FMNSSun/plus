@@ -40,14 +40,6 @@ func NewPLUSConnManagerClient(packetConn net.PacketConn, plusConnState *PLUSConn
     return plusConnManager
 }
 
-func NewPLUSConnManager(packetConn net.PacketConn) *PLUSConnManager {
-	plusConnManager := PLUSConnManager { 
-	               connectionStates : make(map[uint64]*PLUSConnState),
-	               mutex : &sync.Mutex{},
-	               maxPacketSize : 8192,
-	               packetConn : packetConn }
-	return &plusConnManager
-}
 
 func (plus *PLUSConnManager) LocalAddr() net.Addr {
 	return plus.packetConn.LocalAddr()
@@ -186,9 +178,6 @@ func (plus *PLUSConnManager) Close() error {
     return plus.packetConn.Close()
 }
 
-func (plus *PLUSConnManager) LocalAddr() net.Addr {
-    return plus.packetConn.LocalAddr()
-}
 
 /* /type PLUS */
 
