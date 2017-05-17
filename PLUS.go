@@ -4,6 +4,21 @@ import "plus/packet"
 import "fmt"
 import "sync"
 import "net"
+import "io"
+
+var LoggerDestination io.Writer = nil
+var LoggerMutex *sync.Mutex = &sync.Mutex{}
+
+func log(lvl int, msg string, a ...interface{}) {
+	LoggerMutex.Lock()
+	defer LoggerMutex.Unlock()
+
+	if LoggerDestination == nil {
+		return
+	}
+	fmt.Fprintf(LoggerDestination, msg, a...)
+	fmt.Fprintf(LoggerDestination, "\n")
+}
 
 /* iface CryptoContext */
 
@@ -67,6 +82,8 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
 // manually call ReadPacket/ProcessPacket/ReadAndProcessPacket
 // anymore as this is handled by this Listen()
 func (plus *ConnectionManager) Listen() error {
+	log(0, "Listen()")
+
 	for {
 		connection, plusPacket, addr, feedbackData, err := plus.ReadAndProcessPacket()
 
@@ -80,10 +97,15 @@ func (plus *ConnectionManager) Listen() error {
 
 		if feedbackData != nil {
 			// TODO: What do we do with errors here?
-			_ = connection.feedbackChannel.SendFeedback(feedbackData)
+			err = connection.feedbackChannel.SendFeedback(feedbackData)
+
+			if err != nil {
+				log(1, "cm: SendFeedback failed for connection %d", connection.cat)
+			}
 		}
 
 		if connection.cryptoContext != nil {
+			log(0, "Decrypting packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
 			_Payload, ok, err := connection.cryptoContext.DecryptAndValidate(
 				plusPacket.HeaderWithZeroes(),
 				plusPacket.Payload())
@@ -129,7 +151,7 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 
 	if !ok {
 		// New connection
-        fmt.Println("New connection", plus.clientMode)
+        log(1, "cm: New connection: %d (%t)", cat, plus.clientMode)
 		connection = NewConnection(cat, plus.packetConn, remoteAddr, plus)
 		plus.connections[cat] = connection
 	}
@@ -204,6 +226,8 @@ func (plus *ConnectionManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error
 		return nil, addr, err
 	}
 
+	log(0, "cm: ReadPacket received packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
+
 	return plusPacket, addr, nil
 }
 
@@ -237,10 +261,13 @@ func (plus *ConnectionManager) WritePacket(plusPacket *packet.PLUSPacket, addr n
 		return fmt.Errorf("Expected to send %d bytes but could only send %d bytes!", len(buffer), n)
 	}
 
+	log(0, "cm: WritePacket sent packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
+
 	return nil
 }
 
 func (plus *ConnectionManager) Close() error {
+	log(0, "cm: Close()")
     return plus.packetConn.Close()
 }
 
@@ -470,6 +497,7 @@ func (connection *Connection) getPCFRequest() (uint16, uint8, []byte, bool) {
 
 // Closes this connection.
 func (connection *Connection) Close() error {
+	log(0, "c: Close()")
     return nil
 }
 
