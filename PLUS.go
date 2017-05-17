@@ -9,8 +9,18 @@ import "net"
 
 type CryptoContext interface {
 	EncryptAndProtect(plusHeader []byte, payload []byte) ([]byte, error)
-	DecryptAndValidate(plusHeader []byte, payload []byte) ([]byte, error)
+	DecryptAndValidate(plusHeader []byte, payload []byte) ([]byte, bool, error)
 }
+
+/* /iface CryptoContext */
+
+/* iface FeedbackChannel */
+
+type FeedbackChannel interface {
+	SendFeedback([]byte) error
+}
+
+/* /iface FeedbackChannel */
 
 /* type ConnectionManager */
 
@@ -21,6 +31,7 @@ type ConnectionManager struct {
 	maxPacketSize    int
     clientMode       bool
     clientCAT        uint64
+	initConn		 func(connection *Connection) error
 }
 
 func NewConnectionManager(packetConn net.PacketConn) *ConnectionManager {
@@ -34,17 +45,65 @@ func NewConnectionManager(packetConn net.PacketConn) *ConnectionManager {
     return connectionManager
 }
 
-func NewConnectionManagerClient(packetConn net.PacketConn, connection *Connection) *ConnectionManager {
+func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, remoteAddr net.Addr) (*ConnectionManager, *Connection) {
     connectionManager := &ConnectionManager {
         connections : make(map[uint64]*Connection),
         mutex: &sync.Mutex{},
         packetConn: packetConn,
         maxPacketSize: 8192,
         clientMode: true,
-        clientCAT: connection.cat,
+        clientCAT: connectionId,
     }
+
+	connection := NewConnection(connectionId, packetConn, remoteAddr, connectionManager)
+	connectionManager.connections[connection.cat] = connection
     
-    return connectionManager
+    return connectionManager, connection
+}
+
+// Listens on the underlying connection for packets and
+// distributes them to the Connections. This therefore does
+// connection multiplexing. If you do this please DO NOT
+// manually call ReadPacket/ProcessPacket/ReadAndProcessPacket
+// anymore as this is handled by this Listen()
+func (plus *ConnectionManager) Listen() error {
+	for {
+		connection, plusPacket, addr, feedbackData, err := plus.ReadAndProcessPacket()
+
+		if err != nil {
+			return err
+		}
+
+		connection.mutex.Lock()
+		
+		connection.currentRemoteAddr = addr
+
+		if feedbackData != nil {
+			// TODO: What do we do with errors here?
+			_ = connection.feedbackChannel.SendFeedback(feedbackData)
+		}
+
+		if connection.cryptoContext != nil {
+			_Payload, ok, err := connection.cryptoContext.DecryptAndValidate(
+				plusPacket.HeaderWithZeroes(),
+				plusPacket.Payload())
+
+			if !ok {
+				// Skip invalid packets
+			} else {
+				plusPacket.SetPayload(_Payload)
+
+				select {
+					case connection.inChannel <- &packetReceived { packet: plusPacket, err: err }:
+						break
+					default:
+						break // drop packet if consumer is too slow
+				}
+			}
+		}
+
+		connection.mutex.Unlock()
+	}
 }
 
 
@@ -71,7 +130,7 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 	if !ok {
 		// New connection
         fmt.Println("New connection", plus.clientMode)
-		connection = NewConnection(cat, plus.packetConn, remoteAddr)
+		connection = NewConnection(cat, plus.packetConn, remoteAddr, plus)
 		plus.connections[cat] = connection
 	}
 	plus.mutex.Unlock()
@@ -205,6 +264,9 @@ type Connection struct {
     packetConn     net.PacketConn
     currentRemoteAddr net.Addr
 	cryptoContext  CryptoContext
+	feedbackChannel	FeedbackChannel
+	inChannel		chan *packetReceived
+	connManager		*ConnectionManager
 }
 
 type pcfRequest struct {
@@ -213,10 +275,15 @@ type pcfRequest struct {
 	pcfIntegrity uint8
 }
 
+type packetReceived struct {
+	packet *packet.PLUSPacket
+	err	error
+}
+
 const kMaxQueuedPCFRequests int = 10
 
 // Creates a new connection state.
-func NewConnection(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr) *Connection {
+func NewConnection(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr, connManager *ConnectionManager) *Connection {
 	var connection Connection
 	connection.cat = cat
 	connection.psn = 0
@@ -228,6 +295,7 @@ func NewConnection(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr) *
 	connection.pcfElements = 0
 	connection.pcfRequests = make([]pcfRequest, kMaxQueuedPCFRequests)
     connection.currentRemoteAddr = remoteAddr
+	connection.connManager = connManager
 	return &connection
 }
 
@@ -245,7 +313,22 @@ func (connection *Connection) AddPCFFeedback(feedbackData []byte) error {
 	return nil
 }
 
-// Wrapper. Writes an unprotected/unencrypted basic packet!
+// Read data from this connection
+func (connection *Connection) Read(data []byte) (int, error) {
+	packetReceived := <- connection.inChannel //validation/decription happens in the feeder
+
+	plusPacket, err := packetReceived.packet, packetReceived.err
+
+	if err != nil {
+		return 0, err
+	}
+
+	n := copy(data, plusPacket.Payload())
+
+	return n, nil
+}
+
+// Write data to this connection.
 func (connection *Connection) Write(data []byte) error {
     plusPacket, err := connection.PrepareNextPacket()
 	plusPacket.SetPayload(data)
@@ -271,6 +354,33 @@ func (connection *Connection) Write(data []byte) error {
     _, err = connection.packetConn.WriteTo(plusPacket.Buffer(), connection.currentRemoteAddr)
     
     return err
+}
+
+// Send feedback data. Don't call this if you use the Listen() method
+// of the ConnectionManager or if you don't use a FeedbackChannel
+func (connection *Connection) SendFeedback(data []byte) error {
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
+
+	return connection.feedbackChannel.SendFeedback(data)
+}
+
+// Encrypt and protect a packet. Don't call this if you use the Listen() method
+// of the ConnectionManager or if you don't use a CryptoContext.
+func (connection *Connection) EncryptAndProtect(plusPacket *packet.PLUSPacket) ([]byte, error) {
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
+	
+	return connection.cryptoContext.EncryptAndProtect(plusPacket.HeaderWithZeroes(), plusPacket.Payload())
+}
+
+// Decrypt and validate a packet. Don't call this if you use the Listen() method
+// of the ConnectionManager or if you don't use a CryptoContext.
+func (connection *Connection) DecryptAndValidate(plusPacket *packet.PLUSPacket) ([]byte, bool, error) {
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
+
+	return connection.cryptoContext.DecryptAndValidate(plusPacket.HeaderWithZeroes(), plusPacket.Payload())
 }
 
 // Prepares the next packet to be sent by creating an empty (no set payload) PLUS packet
@@ -322,6 +432,13 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 	return plusPacket, nil
 }
 
+// This function needs to be called by the outer layer when it received
+// data on a feedback channel
+func (connection *Connection) AddFeedbackData(feedbackData []byte) error {
+	// TODO: implement
+	return nil
+}
+
 // Queues a PCF request.
 func (connection *Connection) QueuePCFRequest(pcfType uint16, pcfIntegrity uint8, pcfValue []byte) error {
 	connection.mutex.Lock()
@@ -351,26 +468,62 @@ func (connection *Connection) getPCFRequest() (uint16, uint8, []byte, bool) {
 	return req.pcfType, req.pcfIntegrity, req.pcfValue, true
 }
 
+// Closes this connection.
 func (connection *Connection) Close() error {
     return nil
 }
 
+// Returns the local address.
 func (connection *Connection) LocalAddr() net.Addr {
     return connection.packetConn.LocalAddr()
 }
 
+// Returns the remote address.
 func (connection *Connection) RemoteAddr() net.Addr {
-    connection.mutex.Lock()
-    defer connection.mutex.Unlock()
+    connection.mutex.RLock()
+    defer connection.mutex.RUnlock()
     
     return connection.currentRemoteAddr
 }
 
+// Changes the remote address.
 func (connection *Connection) SetRemoteAddr(remoteAddr net.Addr) {
     connection.mutex.Lock()
     defer connection.mutex.Unlock()
     
     connection.currentRemoteAddr = remoteAddr
+}
+
+// Sets the crypto context.
+func (connection *Connection) SetCryptoContext(cryptoContext CryptoContext) {
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
+
+	connection.cryptoContext = cryptoContext
+}
+
+// Returns the crypto context.
+func (connection *Connection) CryptoContext() CryptoContext {
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
+
+	return connection.cryptoContext
+}
+
+// Sets the feedback channel.
+func (connection *Connection) SetFeedbackChannel(feedbackChannel FeedbackChannel) {
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
+
+	connection.feedbackChannel = feedbackChannel
+}
+
+// Returns the feedback channel.
+func (connection *Connection) FeedbackChannel() FeedbackChannel {
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
+	
+	return connection.feedbackChannel
 }
 
 /* /type Connection */
