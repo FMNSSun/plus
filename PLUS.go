@@ -5,13 +5,39 @@ import "fmt"
 import "sync"
 import "net"
 
-/* type PLUS */
+/* type PLUSConnManager */
 
 type PLUSConnManager struct {
 	connectionStates map[uint64]*PLUSConnState
 	mutex            *sync.Mutex
 	packetConn       net.PacketConn
 	maxPacketSize    int
+    clientMode       bool
+    clientCAT        uint64
+}
+
+func NewPLUSConnManager(packetConn net.PacketConn) *PLUSConnManager {
+    plusConnManager := &PLUSConnManager {
+        connectionStates : make(map[uint64]*PLUSConnState),
+        mutex: &sync.Mutex{},
+        packetConn: packetConn,
+        maxPacketSize: 8192,
+    }
+    
+    return plusConnManager
+}
+
+func NewPLUSConnManagerClient(packetConn net.PacketConn, plusConnState *PLUSConnState) *PLUSConnManager {
+    plusConnManager := &PLUSConnManager {
+        connectionStates : make(map[uint64]*PLUSConnState),
+        mutex: &sync.Mutex{},
+        packetConn: packetConn,
+        maxPacketSize: 8192,
+        clientMode: true,
+        clientCAT: plusConnState.cat,
+    }
+    
+    return plusConnManager
 }
 
 func NewPLUSConnManager(packetConn net.PacketConn) *PLUSConnManager {
@@ -30,16 +56,23 @@ func (plus *PLUSConnManager) LocalAddr() net.Addr {
 // Processes a PLUS packet. Returns unprotected part of PCF data that
 // needs to be sent back through an encrypted feedback channel or
 // nil when nothing is to send back.
-func (plus *PLUSConnManager) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
+func (plus *PLUSConnManager) ProcessPacket(plusPacket *packet.PLUSPacket, remoteAddr net.Addr) (*PLUSConnState, []byte, error) {
 	plus.mutex.Lock()
 
 	cat := plusPacket.CAT()
+    
+    if plus.clientMode {
+        if cat != plus.clientCAT {
+            return nil, nil, fmt.Errorf("Expected CAT := %d but got %d", plus.clientCAT, cat)
+        }
+    }
 
 	connectionState, ok := plus.connectionStates[cat]
 
 	if !ok {
 		// New connection
-		connectionState := NewPLUSConnState(cat)
+        fmt.Println("New connection", plus.clientMode)
+		connectionState = NewPLUSConnState(cat, plus.packetConn, remoteAddr)
 		plus.connectionStates[cat] = connectionState
 	}
 	plus.mutex.Unlock()
@@ -50,11 +83,13 @@ func (plus *PLUSConnManager) ProcessPacket(plusPacket *packet.PLUSPacket) ([]byt
 	connectionState.pse = plusPacket.PSN()
 
 	if plusPacket.XFlag() { //extended header? need additional handling here
-		return plus.handleExtendedPacket(plusPacket)
+        data, err := plus.handleExtendedPacket(plusPacket)
+		return connectionState, data, err
 	}
 
-	return nil, nil
+	return connectionState, nil, nil
 }
+
 
 // Updates the CAT of a connection (for connections with changing CATs)
 func (plus *PLUSConnManager) UpdateCAT(oldCat uint64, newCat uint64) error {
@@ -99,13 +134,13 @@ func (plus *PLUSConnManager) handleExtendedPacket(plusPacket *packet.PLUSPacket)
 func (plus *PLUSConnManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
 	buffer := make([]byte, plus.maxPacketSize)
 
-	_, addr, err := plus.packetConn.ReadFrom(buffer)
+	n, addr, err := plus.packetConn.ReadFrom(buffer)
 
 	if err != nil {
 		return nil, addr, err
 	}
 
-	plusPacket, err := packet.NewPLUSPacket(buffer)
+	plusPacket, err := packet.NewPLUSPacket(buffer[:n])
 
 	if err != nil {
 		return nil, addr, err
@@ -115,20 +150,20 @@ func (plus *PLUSConnManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error) 
 }
 
 // ReadAndProcessPacket. See `ReadPacket` and `ProcessPacket`.
-func (plus *PLUSConnManager) ReadAndProcessPacket() (*packet.PLUSPacket, net.Addr, []byte, error) {
+func (plus *PLUSConnManager) ReadAndProcessPacket() (*PLUSConnState, *packet.PLUSPacket, net.Addr, []byte, error) {
 	plusPacket, addr, err := plus.ReadPacket()
 
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
-	feedbackData, err := plus.ProcessPacket(plusPacket)
+	plusConnState, feedbackData, err := plus.ProcessPacket(plusPacket, addr)
 
 	if err != nil {
-		return nil, nil, nil, err
+		return plusConnState, nil, nil, nil, err
 	}
 
-	return plusPacket, addr, feedbackData, nil
+	return plusConnState, plusPacket, addr, feedbackData, nil
 }
 
 // Writes a PLUS packet to the underlying PacketConn.
@@ -147,6 +182,14 @@ func (plus *PLUSConnManager) WritePacket(plusPacket *packet.PLUSPacket, addr net
 	return nil
 }
 
+func (plus *PLUSConnManager) Close() error {
+    return plus.packetConn.Close()
+}
+
+func (plus *PLUSConnManager) LocalAddr() net.Addr {
+    return plus.packetConn.LocalAddr()
+}
+
 /* /type PLUS */
 
 /* type PLUSConnState */
@@ -163,6 +206,8 @@ type PLUSConnState struct {
 	pcfReadIndex   int
 	pcfElements    int
 	mutex          *sync.RWMutex
+    packetConn     net.PacketConn
+    currentRemoteAddr net.Addr
 }
 
 type pcfRequest struct {
@@ -174,16 +219,18 @@ type pcfRequest struct {
 const kMaxQueuedPCFRequests int = 10
 
 // Creates a new connection state.
-func NewPLUSConnState(cat uint64) *PLUSConnState {
+func NewPLUSConnState(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr) *PLUSConnState {
 	var plusConnState PLUSConnState
 	plusConnState.cat = cat
 	plusConnState.psn = 0
 	plusConnState.pse = 0
+    plusConnState.packetConn = packetConn
 	plusConnState.mutex = &sync.RWMutex{}
 	plusConnState.pcfInsertIndex = 0
 	plusConnState.pcfReadIndex = 0
 	plusConnState.pcfElements = 0
 	plusConnState.pcfRequests = make([]pcfRequest, kMaxQueuedPCFRequests)
+    plusConnState.currentRemoteAddr = remoteAddr
 	return &plusConnState
 }
 
@@ -199,6 +246,28 @@ func (plusConnState *PLUSConnState) SetCAT(newCat uint64) {
 func (plusConnState *PLUSConnState) AddPCFFeedback(feedbackData []byte) error {
 	//TODO
 	return nil
+}
+
+// Wrapper. Writes an unprotected/unencrypted basic packet!
+func (plusConnState *PLUSConnState) Write(data []byte) error {
+    plusConnState.mutex.Lock()
+	defer plusConnState.mutex.Unlock()
+
+    // Advance PSN (initialized to zero)
+	plusConnState.psn += 1
+
+    plusPacket := packet.NewBasicPLUSPacket(
+			plusConnState.defaultLFlag,
+			plusConnState.defaultRFlag,
+			plusConnState.defaultSFlag,
+			plusConnState.cat,
+			plusConnState.psn,
+			plusConnState.pse,
+			data)
+            
+    _, err := plusConnState.packetConn.WriteTo(plusPacket.Buffer(), plusConnState.currentRemoteAddr)
+    
+    return err
 }
 
 // Prepares the next packet to be sent by creating an empty (no set payload) PLUS packet
@@ -278,6 +347,28 @@ func (plusConnState *PLUSConnState) GetPCFRequest() (uint16, uint8, []byte, bool
 	plusConnState.pcfElements--
 
 	return req.pcfType, req.pcfIntegrity, req.pcfValue, true
+}
+
+func (plusConnState *PLUSConnState) Close() error {
+    return nil
+}
+
+func (plusConnState *PLUSConnState) LocalAddr() net.Addr {
+    return plusConnState.packetConn.LocalAddr()
+}
+
+func (plusConnState *PLUSConnState) RemoteAddr() net.Addr {
+    plusConnState.mutex.Lock()
+    defer plusConnState.mutex.Unlock()
+    
+    return plusConnState.currentRemoteAddr
+}
+
+func (plusConnState *PLUSConnState) SetRemoteAddr(remoteAddr net.Addr) {
+    plusConnState.mutex.Lock()
+    defer plusConnState.mutex.Unlock()
+    
+    plusConnState.currentRemoteAddr = remoteAddr
 }
 
 /* /type PLUSConnState */
