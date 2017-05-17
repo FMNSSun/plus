@@ -5,6 +5,13 @@ import "fmt"
 import "sync"
 import "net"
 
+/* iface CryptoContext */
+
+type CryptoContext interface {
+	EncryptAndProtect(plusHeader []byte, payload []byte) ([]byte, error)
+	DecryptAndValidate(plusHeader []byte, payload []byte) ([]byte, error)
+}
+
 /* type ConnectionManager */
 
 type ConnectionManager struct {
@@ -197,6 +204,7 @@ type Connection struct {
 	mutex          *sync.RWMutex
     packetConn     net.PacketConn
     currentRemoteAddr net.Addr
+	cryptoContext  CryptoContext
 }
 
 type pcfRequest struct {
@@ -239,22 +247,28 @@ func (connection *Connection) AddPCFFeedback(feedbackData []byte) error {
 
 // Wrapper. Writes an unprotected/unencrypted basic packet!
 func (connection *Connection) Write(data []byte) error {
-    connection.mutex.Lock()
+    plusPacket, err := connection.PrepareNextPacket()
+	plusPacket.SetPayload(data)
+
+	connection.mutex.Lock()
 	defer connection.mutex.Unlock()
+           
+	if err != nil {
+		return err
+	}
 
-    // Advance PSN (initialized to zero)
-	connection.psn += 1
+	if connection.cryptoContext != nil {
+		_Payload, err := connection.cryptoContext.EncryptAndProtect(
+				plusPacket.HeaderWithZeroes(), data)
 
-    plusPacket := packet.NewBasicPLUSPacket(
-			connection.defaultLFlag,
-			connection.defaultRFlag,
-			connection.defaultSFlag,
-			connection.cat,
-			connection.psn,
-			connection.pse,
-			data)
-            
-    _, err := connection.packetConn.WriteTo(plusPacket.Buffer(), connection.currentRemoteAddr)
+		if err != nil {
+			return err
+		}
+
+		plusPacket.SetPayload(_Payload)
+	}
+
+    _, err = connection.packetConn.WriteTo(plusPacket.Buffer(), connection.currentRemoteAddr)
     
     return err
 }
@@ -264,7 +278,9 @@ func (connection *Connection) Write(data []byte) error {
 // to `WritePacket`.
 func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 	connection.mutex.Lock()
-	defer connection.mutex.Unlock()
+	defer func(){ 
+		connection.mutex.Unlock()
+	}()
 
 	// Advance PSN (initialized to zero)
 	connection.psn += 1
@@ -272,7 +288,7 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 	var plusPacket *packet.PLUSPacket
 	var err error
 
-	pcfType, pcfIntegrity, pcfValue, ok := connection.GetPCFRequest()
+	pcfType, pcfIntegrity, pcfValue, ok := connection.getPCFRequest()
 
 	if ok {
 		// Pending PCF, send extended packet
@@ -323,10 +339,7 @@ func (connection *Connection) QueuePCFRequest(pcfType uint16, pcfIntegrity uint8
 }
 
 // Returns and unqueues a PCF request.
-func (connection *Connection) GetPCFRequest() (uint16, uint8, []byte, bool) {
-	connection.mutex.Lock()
-	defer connection.mutex.Unlock()
-
+func (connection *Connection) getPCFRequest() (uint16, uint8, []byte, bool) {
 	if connection.pcfElements == 0 {
 		return 0xDEAD, 0x00, nil, false
 	}
