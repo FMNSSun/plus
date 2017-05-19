@@ -147,6 +147,7 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
     
     if plus.clientMode {
         if cat != plus.clientCAT {
+			plus.mutex.Unlock()
             return nil, nil, fmt.Errorf("Expected CAT := %d but got %d", plus.clientCAT, cat)
         }
 
@@ -353,8 +354,8 @@ func (connection *Connection) SetCAT(newCat uint64) {
 }
 
 func (connection *Connection) CAT() uint64 {
-	connection.mutex.Lock()
-	defer connection.mutex.RLock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.cat
 }
