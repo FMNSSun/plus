@@ -137,7 +137,9 @@ func (plus *ConnectionManager) LocalAddr() net.Addr {
 // needs to be sent back through an encrypted feedback channel or
 // nil when nothing is to send back.
 func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remoteAddr net.Addr) (*Connection, []byte, error) {
-	log(0, "%s\t\tProcessing packet [%d/%d]: %x", plus.packetConn.LocalAddr().String(), plusPacket.PSN(), plusPacket.PSE(), plusPacket.Buffer())
+	log(0, "%s\t\t\tProcessing packet [%d/%d]: %x", plus.packetConn.LocalAddr().String(), 
+		plusPacket.PSN(), plusPacket.PSE(),
+		plusPacket.Header())
 
 	plus.mutex.Lock()
 
@@ -147,6 +149,7 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
         if cat != plus.clientCAT {
             return nil, nil, fmt.Errorf("Expected CAT := %d but got %d", plus.clientCAT, cat)
         }
+
     }
 
 	connection, ok := plus.connections[cat]
@@ -161,6 +164,10 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 
 	connection.mutex.Lock()
 	defer connection.mutex.Unlock()
+
+	if plusPacket.PSN() == 1 && plus.clientMode {
+		connection.queuePCFRequest(0x01, 0x00, []byte{0xCA,0xFE,0xBA,0xBE}) //just for fun
+	}
 
 	connection.pse = plusPacket.PSN()
 
@@ -237,7 +244,7 @@ func (plus *ConnectionManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error
 		return nil, addr, err
 	}
 
-	log(1, "cm: ReadPacket received packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
+	//log(1, "cm: ReadPacket received packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
 
 	return plusPacket, addr, nil
 }
@@ -354,7 +361,11 @@ func (connection *Connection) CAT() uint64 {
 
 // Adds received PCF feedback data
 func (connection *Connection) AddPCFFeedback(feedbackData []byte) error {
-	//TODO
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
+
+	log(1, "%s\t\t\tReceived PCF feedback: %x", connection.packetConn.LocalAddr().String(), feedbackData)
+
 	return nil
 }
 
@@ -396,9 +407,9 @@ func (connection *Connection) Write(data []byte) error {
 		plusPacket.SetPayload(_Payload)
 	}
 
-	log(0,"%s\t\tSending [%d,%d] %x to %s", connection.packetConn.LocalAddr().String(),
+	log(0,"%s\t\t\tSending [%d,%d]: %x", connection.packetConn.LocalAddr().String(),
 		plusPacket.PSN(), plusPacket.PSE(),
-    	plusPacket.Buffer(), connection.currentRemoteAddr.String())
+    	plusPacket.Header(), connection.currentRemoteAddr.String())
 
     _, err = connection.packetConn.WriteTo(plusPacket.Buffer(), connection.currentRemoteAddr)
     
@@ -477,10 +488,6 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 			connection.psn,
 			connection.pse,
 			nil)
-	}
-
-	if connection.psn == 5 {
-		connection.queuePCFRequest(0x01, 0x00, []byte{0xCA,0xFE,0xBA,0xBE}) //just for fun
 	}
 
 	return plusPacket, nil
