@@ -334,6 +334,13 @@ func (connection *Connection) SetCAT(newCat uint64) {
 	connection.cat = newCat
 }
 
+func (connection *Connection) CAT() uint64 {
+	connection.mutex.Lock()
+	defer connection.mutex.RLock()
+
+	return connection.cat
+}
+
 // Adds received PCF feedback data
 func (connection *Connection) AddPCFFeedback(feedbackData []byte) error {
 	//TODO
