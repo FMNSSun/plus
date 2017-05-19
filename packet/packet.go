@@ -252,7 +252,7 @@ func (plusPacket *PLUSPacket) PCFValueUnprotected() ([]byte, error) {
 	if pcfIntegrity == PCF_INTEGRITY_FULL {
 		return nil, nil
 	} else if pcfIntegrity == PCF_INTEGRITY_ZERO {
-		offset = int(pcfLen)
+		offset = 0
 	} else if pcfIntegrity == PCF_INTEGRITY_HALF {
 		offset = int(pcfLen / 2)
 	} else if pcfIntegrity == PCF_INTEGRITY_QUARTER {

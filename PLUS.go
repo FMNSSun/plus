@@ -82,7 +82,7 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
 // manually call ReadPacket/ProcessPacket/ReadAndProcessPacket
 // anymore as this is handled by this Listen()
 func (plus *ConnectionManager) Listen() error {
-	log(0, "Listen()")
+	log(1, "Listen()")
 
 	for {
 		connection, plusPacket, addr, feedbackData, err := plus.ReadAndProcessPacket()
@@ -100,12 +100,12 @@ func (plus *ConnectionManager) Listen() error {
 			err = connection.feedbackChannel.SendFeedback(feedbackData)
 
 			if err != nil {
-				log(1, "cm: SendFeedback failed for connection %d", connection.cat)
+				log(2, "cm: SendFeedback failed for connection %d", connection.cat)
 			}
 		}
 
 		if connection.cryptoContext != nil {
-			log(0, "Decrypting packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
+			log(1, "Decrypting packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
 			_Payload, ok, err := connection.cryptoContext.DecryptAndValidate(
 				plusPacket.HeaderWithZeroes(),
 				plusPacket.Payload())
@@ -137,6 +137,8 @@ func (plus *ConnectionManager) LocalAddr() net.Addr {
 // needs to be sent back through an encrypted feedback channel or
 // nil when nothing is to send back.
 func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remoteAddr net.Addr) (*Connection, []byte, error) {
+	log(0, "%s\t\tProcessing packet [%d/%d]: %x", plus.packetConn.LocalAddr().String(), plusPacket.PSN(), plusPacket.PSE(), plusPacket.Buffer())
+
 	plus.mutex.Lock()
 
 	cat := plusPacket.CAT()
@@ -151,7 +153,7 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 
 	if !ok {
 		// New connection
-        log(1, "cm: New connection: %d (%t)", cat, plus.clientMode)
+        log(2, "cm: New connection: %d (%t)", cat, plus.clientMode)
 		connection = NewConnection(cat, plus.packetConn, remoteAddr, plus)
 		plus.connections[cat] = connection
 	}
@@ -164,6 +166,7 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 
 	if plusPacket.XFlag() { //extended header? need additional handling here
         data, err := plus.handleExtendedPacket(plusPacket)
+		log(0, "Unprotected part: %x", data)
 		return connection, data, err
 	}
 
@@ -202,9 +205,17 @@ func (plus *ConnectionManager) GetConnection(cat uint64) (*Connection, error) {
 
 // [internal] handles packets with extended header
 func (plus *ConnectionManager) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
+	log(0, "handleExtendedPacket")
 	unprotected, err := plusPacket.PCFValueUnprotected()
 	if err != nil {
+		log(0, "Hm: %s", err.Error())
 		return nil, nil
+	}
+
+	value, err := plusPacket.PCFValue()
+
+	if err != nil {
+		log(0, "pcfValue := %x", value)
 	}
 
 	return unprotected, nil
@@ -226,7 +237,7 @@ func (plus *ConnectionManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error
 		return nil, addr, err
 	}
 
-	log(0, "cm: ReadPacket received packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
+	log(1, "cm: ReadPacket received packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
 
 	return plusPacket, addr, nil
 }
@@ -261,13 +272,13 @@ func (plus *ConnectionManager) WritePacket(plusPacket *packet.PLUSPacket, addr n
 		return fmt.Errorf("Expected to send %d bytes but could only send %d bytes!", len(buffer), n)
 	}
 
-	log(0, "cm: WritePacket sent packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
+	log(1, "cm: WritePacket sent packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
 
 	return nil
 }
 
 func (plus *ConnectionManager) Close() error {
-	log(0, "cm: Close()")
+	log(1, "cm: Close()")
     return plus.packetConn.Close()
 }
 
@@ -385,6 +396,10 @@ func (connection *Connection) Write(data []byte) error {
 		plusPacket.SetPayload(_Payload)
 	}
 
+	log(0,"%s\t\tSending [%d,%d] %x to %s", connection.packetConn.LocalAddr().String(),
+		plusPacket.PSN(), plusPacket.PSE(),
+    	plusPacket.Buffer(), connection.currentRemoteAddr.String())
+
     _, err = connection.packetConn.WriteTo(plusPacket.Buffer(), connection.currentRemoteAddr)
     
     return err
@@ -435,6 +450,7 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 	pcfType, pcfIntegrity, pcfValue, ok := connection.getPCFRequest()
 
 	if ok {
+		log(2, "Pending PCF(%d,%d,%x)", pcfType, pcfIntegrity, pcfValue)
 		// Pending PCF, send extended packet
 		plusPacket, err = packet.NewExtendedPLUSPacket(
 			connection.defaultLFlag,
@@ -463,6 +479,10 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 			nil)
 	}
 
+	if connection.psn == 5 {
+		connection.queuePCFRequest(0x01, 0x00, []byte{0xCA,0xFE,0xBA,0xBE}) //just for fun
+	}
+
 	return plusPacket, nil
 }
 
@@ -473,10 +493,8 @@ func (connection *Connection) AddFeedbackData(feedbackData []byte) error {
 	return nil
 }
 
-// Queues a PCF request.
-func (connection *Connection) QueuePCFRequest(pcfType uint16, pcfIntegrity uint8, pcfValue []byte) error {
-	connection.mutex.Lock()
-	defer connection.mutex.Unlock()
+func (connection *Connection) queuePCFRequest(pcfType uint16, pcfIntegrity uint8, pcfValue []byte) error {
+	log(2, "QueuePCFRequest(%d,%d,%x)", pcfType, pcfIntegrity, pcfValue)
 
 	if connection.pcfElements >= len(connection.pcfRequests) {
 		return fmt.Errorf("Buffer is full!")
@@ -487,6 +505,14 @@ func (connection *Connection) QueuePCFRequest(pcfType uint16, pcfIntegrity uint8
 	connection.pcfElements++
 
 	return nil
+}
+
+// Queues a PCF request.
+func (connection *Connection) QueuePCFRequest(pcfType uint16, pcfIntegrity uint8, pcfValue []byte) error {
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
+
+	return connection.queuePCFRequest(pcfType, pcfIntegrity, pcfValue)
 }
 
 // Returns and unqueues a PCF request.
@@ -504,7 +530,7 @@ func (connection *Connection) getPCFRequest() (uint16, uint8, []byte, bool) {
 
 // Closes this connection.
 func (connection *Connection) Close() error {
-	log(0, "c: Close()")
+	log(1, "c: Close()")
     return nil
 }
 
