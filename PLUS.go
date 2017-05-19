@@ -360,6 +360,13 @@ func (connection *Connection) CAT() uint64 {
 	return connection.cat
 }
 
+func (connection *Connection) PSE() uint32 {
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
+
+	return connection.pse
+}
+
 // Adds received PCF feedback data
 func (connection *Connection) AddPCFFeedback(feedbackData []byte) error {
 	connection.mutex.Lock()
