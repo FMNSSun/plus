@@ -5,6 +5,7 @@ import "fmt"
 import "sync"
 import "net"
 import "io"
+import "errors"
 
 var LoggerDestination io.Writer = nil
 var LoggerMutex *sync.Mutex = &sync.Mutex{}
@@ -122,10 +123,23 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
     return connectionManager, connection
 }
 
-// Waits and returns a new connection
+func (plus *ConnectionManager) SetInitConn(initConn func(*Connection) error) {
+	plus.mutex.Lock()
+	defer plus.mutex.Unlock()
+
+	plus.initConn = initConn
+}
+
+// Waits and returns a new connection. nil if the ConnectionManager
+// was closed.
 func (plus *ConnectionManager) Accept() *Connection {
 	log(1, "cm: Accepting")
-	conn := <- plus.newConnections
+	conn, ok := <- plus.newConnections
+
+	if !ok {
+		return nil
+	}
+
 	log(1, "cm: Accepted")
 	return conn
 }
@@ -156,7 +170,7 @@ func (plus *ConnectionManager) Listen() error {
 		
 		connection.currentRemoteAddr = addr
 
-		if feedbackData != nil {
+		if feedbackData != nil && connection.feedbackChannel != nil {
 			// TODO: What do we do with errors here?
 			err = connection.feedbackChannel.SendFeedback(feedbackData)
 
@@ -165,11 +179,15 @@ func (plus *ConnectionManager) Listen() error {
 			}
 		}
 
+		packetValid := false
+
 		if connection.cryptoContext != nil {
 			log(1, "cm: Decrypting packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
 			_Payload, ok, err := connection.cryptoContext.DecryptAndValidate(
 				plusPacket.HeaderWithZeroes(),
 				plusPacket.Payload())
+
+			packetValid = ok
 
 			if err != nil && plus.dropUndecryptablePackets { //drop undecryptable packets?
 				log(1, "cm: Undecryptable packet dropped")
@@ -202,6 +220,14 @@ func (plus *ConnectionManager) Listen() error {
 				default:
 					log(0, "cm: Consumer too slow!")
 					break // drop packet if consumer is too slow
+			}
+		}
+
+		if packetValid { // ignore S flag on invalid packets
+			if connection.closeSent && plusPacket.SFlag() {
+				connection.close() //we sent a close and received a close
+			} else if plusPacket.SFlag() {
+				connection.closeReceived = true
 			}
 		}
 
@@ -243,7 +269,11 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 		plus.connections[cat] = connection
 
 		if plus.initConn != nil {
-			plus.initConn(connection)
+			err := plus.initConn(connection)
+
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 
 		if plus.listenMode {
@@ -375,10 +405,18 @@ func (plus *ConnectionManager) WritePacket(plusPacket *packet.PLUSPacket, addr n
 	return nil
 }
 
+// closes the connection manager
+func (plus *ConnectionManager) close() error {
+	log(1, "cm: Close()")
+	return plus.packetConn.Close()
+}
+
 // Closes the connection manager.
 func (plus *ConnectionManager) Close() error {
-	log(1, "cm: Close()")
-    return plus.packetConn.Close()
+	plus.mutex.Lock()
+	defer plus.mutex.Unlock()
+
+	return plus.close()
 }
 
 
@@ -415,6 +453,10 @@ type Connection struct {
 
 	// back ref to the connection manager
 	connManager		*ConnectionManager
+
+	closeSent	bool
+	closeReceived bool
+	closed	bool
 }
 
 
@@ -486,9 +528,15 @@ func (connection *Connection) AddPCFFeedback(feedbackData []byte) error {
 	return nil
 }
 
+var ErrConnClosed error = errors.New("Connection was closed!")
+
 // Read data from this connection
 func (connection *Connection) Read(data []byte) (int, error) {
-	packetReceived := <- connection.inChannel //validation/decription happens in the feeder
+	packetReceived, ok := <- connection.inChannel //validation/decription happens in the feeder
+
+	if !ok {
+		return 0, ErrConnClosed
+	}
 
 	plusPacket, err := packetReceived.packet, packetReceived.err
 
@@ -508,6 +556,11 @@ func (connection *Connection) Write(data []byte) error {
 
 	connection.mutex.Lock()
 	defer connection.mutex.Unlock()
+
+	if connection.closed {
+		return ErrConnClosed
+	}
+
            
 	if err != nil {
 		return err
@@ -529,6 +582,12 @@ func (connection *Connection) Write(data []byte) error {
     	plusPacket.Header())
 
     _, err = connection.packetConn.WriteTo(plusPacket.Buffer(), connection.currentRemoteAddr)
+
+	if connection.closeReceived && plusPacket.SFlag() {
+		connection.close() //received and sent an SFlag?
+	} else if plusPacket.SFlag() {
+		connection.closeSent = true
+	}
     
     return err
 }
@@ -652,10 +711,30 @@ func (connection *Connection) getPCFRequest() (uint16, uint8, []byte, bool) {
 	return req.pcfType, req.pcfIntegrity, req.pcfValue, true
 }
 
+// closes this connection.
+func (connection *Connection) close() error {
+	log(1, "c: Close()")
+
+	if connection.connManager.clientMode {
+		return connection.connManager.close()
+	} else {
+		connection.connManager.mutex.Lock()
+		delete(connection.connManager.connections, connection.cat)
+		connection.connManager.mutex.Unlock()
+	}
+
+	close(connection.inChannel)
+	connection.closed = true
+
+    return nil
+}
+
 // Closes this connection.
 func (connection *Connection) Close() error {
-	log(1, "c: Close()")
-    return nil
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
+
+	return connection.close()
 }
 
 // Returns the local address.
@@ -709,6 +788,54 @@ func (connection *Connection) FeedbackChannel() FeedbackChannel {
 	defer connection.mutex.RUnlock()
 	
 	return connection.feedbackChannel
+}
+
+// Returns the default L flag.
+func (connection *Connection) LFlag() bool {
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
+
+	return connection.defaultLFlag
+}
+
+// Returns the default R flag.
+func (connection *Connection) RFlag() bool {
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
+
+	return connection.defaultRFlag
+}
+
+// Returns the default S flag
+func (connection *Connection) SFlag() bool {
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
+
+	return connection.defaultSFlag
+}
+
+// Sets the default L flag
+func (connection *Connection) SetLFlag(value bool) {
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
+
+	connection.defaultLFlag = value
+}
+
+// Sets the default R flag
+func (connection *Connection) SetRFlag(value bool) {
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
+
+	connection.defaultRFlag = value
+}
+
+// Sets the default S flag
+func (connection *Connection) SetSFlag(value bool) {
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
+
+	connection.defaultSFlag = value
 }
 
 /* /type Connection */
