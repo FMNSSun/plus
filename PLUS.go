@@ -22,8 +22,19 @@ func log(lvl int, msg string, a ...interface{}) {
 
 /* iface CryptoContext */
 
+// Provides callbacks to encrypt and protect or
+// decrypt and validate packets. 
 type CryptoContext interface {
+	// Encrypts and protects a packet. plusHeader is PLUS header with
+    // necessary fields zeroed out and payload is the actual payload.
+    // This method needs to return the encrypted and protected payload (incl.
+    // integrity protection mechanism).
 	EncryptAndProtect(plusHeader []byte, payload []byte) ([]byte, error)
+
+	// Decrypts and validates a packet. plusHeader is the PLUS header with
+	// necessary fields zeroed out and payload is the encrypted and protected
+    // payload of a packet. Needs to return the decrypted pure payload and indicate
+    // through a bool whether validation was successful or not. 
 	DecryptAndValidate(plusHeader []byte, payload []byte) ([]byte, bool, error)
 }
 
@@ -31,7 +42,10 @@ type CryptoContext interface {
 
 /* iface FeedbackChannel */
 
+// Provides PLUS with methods to send feedback back.
+// Relevant for PCF capabilities.
 type FeedbackChannel interface {
+	// Send feedback back through.
 	SendFeedback([]byte) error
 }
 
@@ -40,26 +54,50 @@ type FeedbackChannel interface {
 /* type ConnectionManager */
 
 type ConnectionManager struct {
+	// map of connections
+
 	connections map[uint64]*Connection
+
+	// used to sync access to fields
 	mutex            *sync.Mutex
+
+	// underlying packet connection
 	packetConn       net.PacketConn
+
+	// maximum packet size in bytes
 	maxPacketSize    int
+
+	// true if client mode, false otherwise
     clientMode       bool
+
+	// if in client mode this holds the expected CAT
     clientCAT        uint64
+
+	// callback to be called when a new connection was established.
+	// (Mostly only relevant in server mode)
 	initConn		 func(connection *Connection) error
+
+	// drop undecryptable packets or forward decryption errors to Read()
+	dropUndecryptablePackets bool
 }
 
+// Creates a new connection manager (server) using packetConn as the underlying
+// packet connection.
 func NewConnectionManager(packetConn net.PacketConn) *ConnectionManager {
     connectionManager := &ConnectionManager {
         connections : make(map[uint64]*Connection),
         mutex: &sync.Mutex{},
         packetConn: packetConn,
         maxPacketSize: 8192,
+		dropUndecryptablePackets: true,
     }
     
     return connectionManager
 }
 
+// Creates a new connection manager for a client using packetConn as the underlying packet connection
+// and the specified connectionId will be used when sending packets. remoteAddr specifies the
+// target.
 func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, remoteAddr net.Addr) (*ConnectionManager, *Connection) {
     connectionManager := &ConnectionManager {
         connections : make(map[uint64]*Connection),
@@ -68,6 +106,7 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
         maxPacketSize: 8192,
         clientMode: true,
         clientCAT: connectionId,
+		dropUndecryptablePackets: true,
     }
 
 	connection := NewConnection(connectionId, packetConn, remoteAddr, connectionManager)
@@ -110,16 +149,21 @@ func (plus *ConnectionManager) Listen() error {
 				plusPacket.HeaderWithZeroes(),
 				plusPacket.Payload())
 
-			if !ok {
-				// Skip invalid packets
+			if err != nil && plus.dropUndecryptablePackets { //drop undecryptable packets?
+				//drop 'em
 			} else {
-				plusPacket.SetPayload(_Payload)
 
-				select {
-					case connection.inChannel <- &packetReceived { packet: plusPacket, err: err }:
-						break
-					default:
-						break // drop packet if consumer is too slow
+				if !ok {
+					// Skip invalid packets
+				} else {
+					plusPacket.SetPayload(_Payload)
+
+					select {
+						case connection.inChannel <- &packetReceived { packet: plusPacket, err: err }:
+							break
+						default:
+							break // drop packet if consumer is too slow
+					}
 				}
 			}
 		}
@@ -128,7 +172,7 @@ func (plus *ConnectionManager) Listen() error {
 	}
 }
 
-
+// Returns the local address of the underlying packet connection.
 func (plus *ConnectionManager) LocalAddr() net.Addr {
 	return plus.packetConn.LocalAddr()
 }
@@ -160,6 +204,10 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
         log(2, "cm: New connection: %d (%t)", cat, plus.clientMode)
 		connection = NewConnection(cat, plus.packetConn, remoteAddr, plus)
 		plus.connections[cat] = connection
+
+		if plus.initConn != nil {
+			plus.initConn(connection)
+		}
 	}
 	plus.mutex.Unlock()
 
@@ -285,6 +333,7 @@ func (plus *ConnectionManager) WritePacket(plusPacket *packet.PLUSPacket, addr n
 	return nil
 }
 
+// Closes the connection manager.
 func (plus *ConnectionManager) Close() error {
 	log(1, "cm: Close()")
     return plus.packetConn.Close()
@@ -302,18 +351,30 @@ type Connection struct {
 	defaultLFlag   bool
 	defaultRFlag   bool
 	defaultSFlag   bool
+
+	// pending pcf requests
 	pcfRequests    []pcfRequest
 	pcfInsertIndex int
 	pcfReadIndex   int
 	pcfElements    int
+
+	// used to synchronize field access.
 	mutex          *sync.RWMutex
+
     packetConn     net.PacketConn
     currentRemoteAddr net.Addr
+
 	cryptoContext  CryptoContext
 	feedbackChannel	FeedbackChannel
+
+	// only relevant in Listen() mode.
+	// Read of Connection will read from this chan.
 	inChannel		chan *packetReceived
+
+	// back ref to the connection manager
 	connManager		*ConnectionManager
 }
+
 
 type pcfRequest struct {
 	pcfType      uint16
@@ -321,11 +382,13 @@ type pcfRequest struct {
 	pcfIntegrity uint8
 }
 
+// pair of (packet, error)
 type packetReceived struct {
 	packet *packet.PLUSPacket
 	err	error
 }
 
+// How many PCF requests in the queue.
 const kMaxQueuedPCFRequests int = 10
 
 // Creates a new connection state.
@@ -345,7 +408,7 @@ func NewConnection(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr, c
 	return &connection
 }
 
-// Changes the CAt
+// Changes the CAT
 func (connection *Connection) SetCAT(newCat uint64) {
 	connection.mutex.Lock()
 	defer connection.mutex.Unlock()
@@ -353,6 +416,7 @@ func (connection *Connection) SetCAT(newCat uint64) {
 	connection.cat = newCat
 }
 
+// Returns the CAT.
 func (connection *Connection) CAT() uint64 {
 	connection.mutex.RLock()
 	defer connection.mutex.RUnlock()
@@ -360,6 +424,7 @@ func (connection *Connection) CAT() uint64 {
 	return connection.cat
 }
 
+// Returns the PSE.
 func (connection *Connection) PSE() uint32 {
 	connection.mutex.RLock()
 	defer connection.mutex.RUnlock()
