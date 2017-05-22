@@ -55,8 +55,10 @@ type FeedbackChannel interface {
 
 type ConnectionManager struct {
 	// map of connections
-
 	connections map[uint64]*Connection
+
+	// new connections
+	newConnections chan *Connection
 
 	// used to sync access to fields
 	mutex            *sync.Mutex
@@ -79,6 +81,9 @@ type ConnectionManager struct {
 
 	// drop undecryptable packets or forward decryption errors to Read()
 	dropUndecryptablePackets bool
+
+	// listen mode?
+	listenMode 		bool
 }
 
 // Creates a new connection manager (server) using packetConn as the underlying
@@ -90,6 +95,7 @@ func NewConnectionManager(packetConn net.PacketConn) *ConnectionManager {
         packetConn: packetConn,
         maxPacketSize: 8192,
 		dropUndecryptablePackets: true,
+		newConnections: make(chan *Connection, 16),
     }
     
     return connectionManager
@@ -107,6 +113,7 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
         clientMode: true,
         clientCAT: connectionId,
 		dropUndecryptablePackets: true,
+		newConnections: make(chan *Connection, 16),
     }
 
 	connection := NewConnection(connectionId, packetConn, remoteAddr, connectionManager)
@@ -115,20 +122,35 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
     return connectionManager, connection
 }
 
+// Waits and returns a new connection
+func (plus *ConnectionManager) Accept() *Connection {
+	log(1, "cm: Accepting")
+	conn := <- plus.newConnections
+	log(1, "cm: Accepted")
+	return conn
+}
+
 // Listens on the underlying connection for packets and
 // distributes them to the Connections. This therefore does
 // connection multiplexing. If you do this please DO NOT
 // manually call ReadPacket/ProcessPacket/ReadAndProcessPacket
 // anymore as this is handled by this Listen()
 func (plus *ConnectionManager) Listen() error {
-	log(1, "Listen()")
+	log(1, "cm: Listen()")
+
+	plus.mutex.Lock()
+	plus.listenMode = true
+	plus.mutex.Unlock()
 
 	for {
 		connection, plusPacket, addr, feedbackData, err := plus.ReadAndProcessPacket()
 
 		if err != nil {
+			log(1, "cm: Error: %s", err.Error())
 			return err
 		}
+
+		log(0, "cm: Inpacket")
 
 		connection.mutex.Lock()
 		
@@ -144,27 +166,42 @@ func (plus *ConnectionManager) Listen() error {
 		}
 
 		if connection.cryptoContext != nil {
-			log(1, "Decrypting packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
+			log(1, "cm: Decrypting packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
 			_Payload, ok, err := connection.cryptoContext.DecryptAndValidate(
 				plusPacket.HeaderWithZeroes(),
 				plusPacket.Payload())
 
 			if err != nil && plus.dropUndecryptablePackets { //drop undecryptable packets?
-				//drop 'em
+				log(1, "cm: Undecryptable packet dropped")
 			} else {
 
 				if !ok {
-					// Skip invalid packets
+					log(1, "cm: Invalid packet skipped")
 				} else {
 					plusPacket.SetPayload(_Payload)
 
+					log(0, "cm: Forwarding packet...")
+
 					select {
 						case connection.inChannel <- &packetReceived { packet: plusPacket, err: err }:
+							log(0, "cm: Packet forwarded...")
 							break
 						default:
+							log(0, "cm: Consumer too slow!")
 							break // drop packet if consumer is too slow
 					}
 				}
+			}
+		} else {
+			log(0, "cm: Forwarding packet...")
+
+			select {
+				case connection.inChannel <- &packetReceived { packet: plusPacket, err: err }:
+					log(0, "cm: Packet forwarded...")
+					break
+				default:
+					log(0, "cm: Consumer too slow!")
+					break // drop packet if consumer is too slow
 			}
 		}
 
@@ -207,6 +244,11 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 
 		if plus.initConn != nil {
 			plus.initConn(connection)
+		}
+
+		if plus.listenMode {
+			log(0, "New connection forwarded")
+			plus.newConnections <- connection
 		}
 	}
 	plus.mutex.Unlock()
@@ -405,6 +447,8 @@ func NewConnection(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr, c
 	connection.pcfRequests = make([]pcfRequest, kMaxQueuedPCFRequests)
     connection.currentRemoteAddr = remoteAddr
 	connection.connManager = connManager
+	connection.inChannel = make(chan *packetReceived, 16)
+
 	return &connection
 }
 
@@ -482,7 +526,7 @@ func (connection *Connection) Write(data []byte) error {
 
 	log(0,"%s\t\t\tSending [%d,%d]: %x", connection.packetConn.LocalAddr().String(),
 		plusPacket.PSN(), plusPacket.PSE(),
-    	plusPacket.Header(), connection.currentRemoteAddr.String())
+    	plusPacket.Header())
 
     _, err = connection.packetConn.WriteTo(plusPacket.Buffer(), connection.currentRemoteAddr)
     
@@ -574,7 +618,7 @@ func (connection *Connection) AddFeedbackData(feedbackData []byte) error {
 }
 
 func (connection *Connection) queuePCFRequest(pcfType uint16, pcfIntegrity uint8, pcfValue []byte) error {
-	log(2, "QueuePCFRequest(%d,%d,%x)", pcfType, pcfIntegrity, pcfValue)
+	log(0, "c: QueuePCFRequest(%d,%d,%x)", pcfType, pcfIntegrity, pcfValue)
 
 	if connection.pcfElements >= len(connection.pcfRequests) {
 		return fmt.Errorf("Buffer is full!")
