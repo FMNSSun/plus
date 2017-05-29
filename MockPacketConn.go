@@ -4,10 +4,10 @@ import "net"
 import "time"
 
 type MockPacketConn struct {
-	DataToRead []byte
+	DataToRead  []byte
 	DataWritten []byte
-	LocalAddr_ net.Addr
-	RemoteAddr net.Addr
+	LocalAddr_  net.Addr
+	RemoteAddr  net.Addr
 }
 
 func (c *MockPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
@@ -18,7 +18,7 @@ func (c *MockPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
 func (c *MockPacketConn) WriteTo(buffer []byte, remoteAddr net.Addr) (int, error) {
 	c.DataWritten = make([]byte, len(buffer))
 	n := copy(c.DataWritten, buffer)
-	return n,  nil
+	return n, nil
 }
 
 func (c *MockPacketConn) Close() error {

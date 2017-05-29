@@ -6,15 +6,14 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-
 )
 
 var _ = Describe("Plus", func() {
 	Context("ConnectionManager", func() {
 		It("Deals with new basic packets", func() {
 			p := packet.NewBasicPLUSPacket(false, false, false, 1234, 11, 12, []byte{0x00})
-			packetConn := &MockPacketConn { DataToRead : p.Buffer(), 
-				DataWritten : nil, RemoteAddr: &MockAddr{} }
+			packetConn := &MockPacketConn{DataToRead: p.Buffer(),
+				DataWritten: nil, RemoteAddr: &MockAddr{}}
 			manager := NewConnectionManager(packetConn)
 			packet, addr, err := manager.ReadPacket()
 			Expect(err).ToNot(HaveOccurred())
