@@ -6,6 +6,7 @@ import "sync"
 import "net"
 import "io"
 import "errors"
+import "time"
 
 var LoggerDestination io.Writer = nil
 var LoggerMutex *sync.Mutex = &sync.Mutex{}
@@ -566,7 +567,7 @@ func (connection *Connection) Read(data []byte) (int, error) {
 }
 
 // Write data to this connection.
-func (connection *Connection) Write(data []byte) error {
+func (connection *Connection) Write(data []byte) (int, error) {
 	plusPacket, err := connection.PrepareNextPacket()
 	plusPacket.SetPayload(data)
 
@@ -574,11 +575,11 @@ func (connection *Connection) Write(data []byte) error {
 	defer connection.Unlock()
 
 	if connection.closed {
-		return ErrConnClosed
+		return 0, ErrConnClosed
 	}
 
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	if connection.cryptoContext != nil {
@@ -586,7 +587,7 @@ func (connection *Connection) Write(data []byte) error {
 			plusPacket.HeaderWithZeroes(), data)
 
 		if err != nil {
-			return err
+			return 0, err
 		}
 
 		plusPacket.SetPayload(_Payload)
@@ -596,7 +597,7 @@ func (connection *Connection) Write(data []byte) error {
 		plusPacket.PSN(), plusPacket.PSE(),
 		plusPacket.Header())
 
-	_, err = connection.packetConn.WriteTo(plusPacket.Buffer(), connection.currentRemoteAddr)
+	n, err := connection.packetConn.WriteTo(plusPacket.Buffer(), connection.currentRemoteAddr)
 
 	if connection.closeReceived && plusPacket.SFlag() {
 		connection.close() //received and sent an SFlag?
@@ -604,7 +605,7 @@ func (connection *Connection) Write(data []byte) error {
 		connection.closeSent = true
 	}
 
-	return err
+	return n, err
 }
 
 // Send feedback data. Don't call this if you use the Listen() method
@@ -871,6 +872,21 @@ func (connection *Connection) RLock() {
 func (connection *Connection) RUnlock() {
 	log(-1, "c: RUNLOCK")
 	connection.mutex.RUnlock()
+}
+
+// TODO
+func (*Connection) SetDeadline(t time.Time) error {
+	return nil
+}
+
+// TODO
+func (*Connection) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+// TODO
+func (*Connection) SetWriteDeadline(t time.Time) error {
+	return nil
 }
 
 /* /type Connection */
