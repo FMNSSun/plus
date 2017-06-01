@@ -525,7 +525,7 @@ func NewExtendedPLUSPacket(
 		if ulen(pcfValue) == 0 {
 			pcfIntegrity = 0 //spec says if len is 0 integrity is unspecified and must be set to zero
 		}
-		fmt.Println(pcfIntegrity)
+
 		plusPacket.header[BASIC_HEADER_LEN+ofs] = (uint8(ulen(pcfValue)) << 2) | pcfIntegrity
 	}
 
