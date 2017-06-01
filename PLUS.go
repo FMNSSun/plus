@@ -535,6 +535,14 @@ func (connection *Connection) PSE() uint32 {
 	return connection.pse
 }
 
+// Returns the PSN.
+func (connection *Connection) PSN() uint32 {
+	connection.RLock()
+	defer connection.RUnlock()
+
+	return connection.psn
+}
+
 // Adds received PCF feedback data
 func (connection *Connection) AddPCFFeedback(feedbackData []byte) error {
 	connection.Lock()
