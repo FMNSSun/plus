@@ -183,9 +183,10 @@ func (plus *ConnectionManager) Listen() error {
 		log(0, "cm: Inpacket")
 
 		connection.Lock()
-
-
 		connection.currentRemoteAddr = addr
+		connection.Unlock()
+
+		connection.RLock()
 
 		if feedbackData != nil && connection.feedbackChannel != nil {
 			log(0, "cm: Feedback data available!")
@@ -242,6 +243,10 @@ func (plus *ConnectionManager) Listen() error {
 				// drop packet if consumer is too slow
 			}
 		}
+
+		connection.RUnlock()
+
+		connection.Lock()
 
 		if packetValid { // ignore S flag on invalid packets
 			if connection.closeSent && plusPacket.SFlag() {
