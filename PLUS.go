@@ -91,6 +91,9 @@ type ConnectionManager struct {
 
 	// listen mode?
 	listenMode bool
+
+	// closed?
+	closed bool
 }
 
 // Creates a new connection manager (server) using packetConn as the underlying
@@ -177,7 +180,10 @@ func (plus *ConnectionManager) Listen() error {
 
 		if err != nil {
 			log(1, "cm: Error: %s", err.Error())
-			return err
+			if plusPacket != InvalidPacket { // don't stop listening on invalid packets.
+				plus.Close()
+				return err
+			}
 		}
 
 		log(0, "cm: Inpacket")
@@ -373,6 +379,8 @@ func (plus *ConnectionManager) handleExtendedPacket(plusPacket *packet.PLUSPacke
 	return unprotected, nil
 }
 
+var InvalidPacket *packet.PLUSPacket = &packet.PLUSPacket{}
+
 // Reads a PLUS packet from the underlying PacketConn.
 func (plus *ConnectionManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
 	buffer := make([]byte, plus.maxPacketSize)
@@ -386,7 +394,7 @@ func (plus *ConnectionManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error
 	plusPacket, err := packet.NewPLUSPacket(buffer[:n])
 
 	if err != nil {
-		return nil, addr, err
+		return InvalidPacket, addr, err
 	}
 
 	//log(1, "cm: ReadPacket received packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
@@ -432,6 +440,7 @@ func (plus *ConnectionManager) WritePacket(plusPacket *packet.PLUSPacket, addr n
 // closes the connection manager
 func (plus *ConnectionManager) close() error {
 	log(1, "cm: Close()")
+	plus.closed = true
 	return plus.packetConn.Close()
 }
 
