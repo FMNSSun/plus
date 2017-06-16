@@ -52,7 +52,7 @@ type CryptoContext interface {
 // Provides PLUS with methods to send feedback back.
 // Relevant for PCF capabilities.
 type FeedbackChannel interface {
-	// Send feedback back through.
+	// Send feedback back through. 
 	SendFeedback([]byte) error
 }
 
@@ -271,7 +271,7 @@ func (plus *ConnectionManager) LocalAddr() net.Addr {
 	return plus.packetConn.LocalAddr()
 }
 
-// Processes a PLUS packet. Returns unprotected part of PCF data that
+// Processes a PLUS packet. Returns data that
 // needs to be sent back through an encrypted feedback channel or
 // nil when nothing is to send back.
 func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remoteAddr net.Addr) (*Connection, []byte, error) {
@@ -318,7 +318,7 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 	defer connection.Unlock()
 
 	if plusPacket.PSN() == 1 && plus.clientMode {
-		connection.queuePCFRequest(0x01, 0x00, []byte{0xCA, 0xFE, 0xBA, 0xBE}) //just for fun
+		connection.queuePCFRequest(packet.PCF_TYPE_HOP_COUNT, packet.PCF_INTEGRITY_ZERO, []byte{0x00}) // send a HOP_COUNT request
 	}
 
 	connection.pse = plusPacket.PSN()
@@ -364,19 +364,9 @@ func (plus *ConnectionManager) GetConnection(cat uint64) (*Connection, error) {
 // [internal] handles packets with extended header
 func (plus *ConnectionManager) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 	log(0, "handleExtendedPacket")
-	unprotected, err := plusPacket.PCFValueUnprotected()
-	if err != nil {
-		log(0, "Hm: %s", err.Error())
-		return nil, nil
-	}
+	
 
-	value, err := plusPacket.PCFValue()
-
-	if err != nil {
-		log(0, "pcfValue := %x", value)
-	}
-
-	return unprotected, nil
+	return plusPacket.Header(), nil
 }
 
 var InvalidPacket *packet.PLUSPacket = &packet.PLUSPacket{}
@@ -489,6 +479,8 @@ type Connection struct {
 	closeSent     bool
 	closeReceived bool
 	closed        bool
+
+	pcfFeedback map[uint16][]byte
 }
 
 type pcfRequest struct {
@@ -521,6 +513,7 @@ func NewConnection(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr, c
 	connection.currentRemoteAddr = remoteAddr
 	connection.connManager = connManager
 	connection.inChannel = make(chan *packetReceived, 16)
+	connection.pcfFeedback = make(map[uint16][]byte)
 
 	return &connection
 }
@@ -692,6 +685,10 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		// Set value to nil in pcfFeedback map to indicate
+		// that this request was sent
+		connection.pcfFeedback[pcfType] = nil
 	} else {
 		// No pending PCF, send basic packet
 		plusPacket = packet.NewBasicPLUSPacket(
@@ -710,7 +707,36 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 // This function needs to be called by the outer layer when it received
 // data on a feedback channel
 func (connection *Connection) AddFeedbackData(feedbackData []byte) error {
-	// TODO: implement
+	connection.Lock()
+	defer connection.Unlock()
+
+	plusPacket, err := packet.NewPLUSPacket(feedbackData)
+
+	if err != nil {
+		return err
+	}
+
+	unprotected, err := plusPacket.PCFValueUnprotected()
+
+	if err != nil {
+		return err
+	}
+
+	pcfType, err := plusPacket.PCFType()
+
+	if err != nil {
+		return err
+	}
+
+	_, ok := connection.pcfFeedback[pcfType]
+
+	if !ok {
+		log(0, "c: Received unrequested PCF feedback!")
+		return nil // wasn't requested so ignore it.
+	} else {
+		connection.pcfFeedback[pcfType] = unprotected
+	}
+
 	return nil
 }
 

@@ -30,6 +30,8 @@ const PCF_INTEGRITY_QUARTER uint8 = 1
 const PCF_INTEGRITY_HALF uint8 = 2
 const PCF_INTEGRITY_FULL uint8 = 3
 
+const PCF_TYPE_HOP_COUNT uint16 = 0x0001
+
 // Returns value of the L flag
 func (plusPacket *PLUSPacket) LFlag() bool {
 	return toBool((plusPacket.header[3] >> 3) & 0x01)
