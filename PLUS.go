@@ -479,6 +479,7 @@ type Connection struct {
 	closeSent     bool
 	closeReceived bool
 	closed        bool
+	closeConn     func(connection *Connection) error
 
 	pcfFeedback map[uint16][]byte
 }
@@ -780,6 +781,13 @@ func (connection *Connection) close() error {
 	log(1, "c: Close()")
 
 	if connection.connManager.clientMode {
+		if connection.closeConn != nil {
+		err := connection.closeConn(connection)
+			if err != nil {
+				return err
+			}
+		}
+
 		return connection.connManager.close()
 	} else {
 		connection.connManager.Lock()
@@ -789,6 +797,13 @@ func (connection *Connection) close() error {
 
 	close(connection.inChannel)
 	connection.closed = true
+
+	if connection.closeConn != nil {
+		err := connection.closeConn(connection)
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -820,6 +835,14 @@ func (connection *Connection) SetRemoteAddr(remoteAddr net.Addr) {
 	defer connection.Unlock()
 
 	connection.currentRemoteAddr = remoteAddr
+}
+
+// Sets the CloseConn callback
+func (connection *Connection) SetCloseConn(closeConn func(connection *Connection) error) {
+	connection.Lock()
+	defer connection.Unlock()
+
+	connection.closeConn = closeConn
 }
 
 // Sets the crypto context.
