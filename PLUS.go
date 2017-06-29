@@ -118,6 +118,9 @@ type ConnectionManager struct {
 
 	// closed?
 	closed bool
+
+	// useNGoRoutines
+	useNGoRoutines uint8
 }
 
 // Creates a new connection manager (server) using packetConn as the underlying
@@ -156,16 +159,27 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
 	return connectionManager, connection
 }
 
+// Obtain a W lock to the connection manager. You shouldn't have to call this.
 func (plus *ConnectionManager) Lock() {
 	log(0, "cm: LOCK")
 	plus.mutex.Lock()
 }
 
+// Release a W lock to the connection manager. Neither should you have to call this.
 func (plus *ConnectionManager) Unlock() {
 	log(0, "cm: UNLOCK")
 	plus.mutex.Unlock()
 }
 
+// Tells the connection manager how many go routines to use.
+func (plus *ConnectionManager) SetUseNGoRoutines(n uint8) {
+	plus.Lock()
+	defer plus.Unlock()
+
+	plus.useNGoRoutines = n
+}
+
+// Sets the InitConn callback.
 func (plus *ConnectionManager) SetInitConn(initConn func(*Connection) error) {
 	plus.Lock()
 	defer plus.Unlock()
@@ -187,18 +201,8 @@ func (plus *ConnectionManager) Accept() *Connection {
 	return conn
 }
 
-// Listens on the underlying connection for packets and
-// distributes them to the Connections. This therefore does
-// connection multiplexing. If you do this please DO NOT
-// manually call ReadPacket/ProcessPacket/ReadAndProcessPacket
-// anymore as this is handled by this Listen()
-func (plus *ConnectionManager) Listen() error {
-	log(1, "cm: Listen()")
-
-	plus.Lock()
-	plus.listenMode = true
-	plus.Unlock()
-
+// 
+func (plus *ConnectionManager) listenLoop() error {
 	for {
 		connection, plusPacket, addr, feedbackData, err := plus.ReadAndProcessPacket()
 
@@ -288,6 +292,31 @@ func (plus *ConnectionManager) Listen() error {
 
 		connection.Unlock()
 	}
+}
+
+// Listens on the underlying connection for packets and
+// distributes them to the Connections. This therefore does
+// connection multiplexing. If you do this please DO NOT
+// manually call ReadPacket/ProcessPacket/ReadAndProcessPacket
+// anymore as this is handled by this Listen().
+// If useNGoRoutines is zero this will block, otherwise it will
+// always immediately return nil.
+func (plus *ConnectionManager) Listen() error {
+	log(1, "cm: Listen()")
+
+	plus.Lock()
+	plus.listenMode = true
+	plus.Unlock()
+
+	if plus.useNGoRoutines == 0 {
+		return plus.listenLoop()
+	} else {
+		for i := uint8(0); i < plus.useNGoRoutines; i++ {
+			go plus.listenLoop()
+		}
+	}
+
+	return nil
 }
 
 // Returns the local address of the underlying packet connection.
