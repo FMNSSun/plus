@@ -7,7 +7,30 @@ import "net"
 import "io"
 import "errors"
 import "time"
+import crand "crypto/rand"
 import "math/rand"
+import "math/big"
+import m "math"
+
+// Returns a cryptographically strong random PSN value
+// if possible, otherwise it will fallback to a regular
+// PRNG.
+func RandomPSN() uint32 {
+	bigNum, err := crand.Int(crand.Reader, big.NewInt(m.MaxUint32))
+	
+	if err != nil {
+		return rand.Uint32()
+	}
+
+	return uint32(bigNum.Uint64())
+}
+
+// Returns a cryptographically strong random CAT value
+// if possible, otherwise it will fallback to a regular
+// PRNG.
+func RandomCAT() uint64 {
+	return uint64(RandomPSN())<<32 | uint64(RandomPSN())
+}
 
 var LoggerDestination io.Writer = nil
 var LoggerMutex *sync.Mutex = &sync.Mutex{}
@@ -504,7 +527,7 @@ const kMaxQueuedPCFRequests int = 10
 func NewConnection(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr, connManager *ConnectionManager) *Connection {
 	var connection Connection
 	connection.cat = cat
-	connection.psn = rand.Uint32()
+	connection.psn = RandomPSN()
 	connection.pse = 0
 	connection.packetConn = packetConn
 	connection.mutex = &sync.RWMutex{}
