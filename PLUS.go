@@ -460,13 +460,13 @@ func (plus *ConnectionManager) ReadAndProcessPacket() (*Connection, *packet.PLUS
 	plusPacket, addr, err := plus.ReadPacket()
 
 	if err != nil {
-		return nil, plusPacket, addr, nil, err
+		return nil, plusPacket, addr, nil, err // make sure we pass plusPacket because it might be InvalidPacket
 	}
 
 	connection, feedbackData, err := plus.ProcessPacket(plusPacket, addr)
 
 	if err != nil {
-		return connection, nil, nil, nil, err
+		return connection, nil, nil, nil, err // make sure we pass connection because it might be InvalidConnection
 	}
 
 	return connection, plusPacket, addr, feedbackData, nil
