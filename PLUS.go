@@ -7,6 +7,7 @@ import "net"
 import "io"
 import "errors"
 import "time"
+import "math/rand"
 
 var LoggerDestination io.Writer = nil
 var LoggerMutex *sync.Mutex = &sync.Mutex{}
@@ -503,7 +504,7 @@ const kMaxQueuedPCFRequests int = 10
 func NewConnection(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr, connManager *ConnectionManager) *Connection {
 	var connection Connection
 	connection.cat = cat
-	connection.psn = 0
+	connection.psn = rand.Uint32()
 	connection.pse = 0
 	connection.packetConn = packetConn
 	connection.mutex = &sync.RWMutex{}
@@ -662,6 +663,10 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 
 	// Advance PSN (initialized to zero)
 	connection.psn += 1
+
+	if connection.psn == 0 {
+		connection.psn = 1
+	}
 
 	var plusPacket *packet.PLUSPacket
 	var err error
