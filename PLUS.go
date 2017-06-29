@@ -208,7 +208,7 @@ func (plus *ConnectionManager) listenLoop() error {
 
 		if err != nil {
 			log(1, "cm: Error: %s", err.Error())
-			if plusPacket != InvalidPacket { // don't stop listening on invalid packets.
+			if plusPacket != InvalidPacket && connection != InvalidConnection { // don't stop listening on invalid packets or invalid connections.
 				plus.Close()
 				return err
 			}
@@ -339,7 +339,7 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 	if plus.clientMode {
 		if cat != plus.clientCAT {
 			plus.Unlock()
-			return nil, nil, fmt.Errorf("Expected CAT := %d but got %d", plus.clientCAT, cat)
+			return InvalidConnection, nil, fmt.Errorf("Expected CAT := %d but got %d", plus.clientCAT, cat)
 		}
 
 	}
@@ -422,7 +422,15 @@ func (plus *ConnectionManager) handleExtendedPacket(plusPacket *packet.PLUSPacke
 	return plusPacket.Header(), nil
 }
 
+// This will be returned (in addition to error) by ReadPacket in case of a NON-CRITICAL error
+// to distinguish between an error where the connection is broken or an error where a
+// packet was invalid. 
 var InvalidPacket *packet.PLUSPacket = &packet.PLUSPacket{}
+
+// This will be returned (in addition to error) by ProcessPacket in case of a NON-CRITICAL error
+// to distinguish between an error where the connection is broken or an error where a packet
+// was invalid.
+var InvalidConnection *Connection = &Connection{}
 
 // Reads a PLUS packet from the underlying PacketConn.
 func (plus *ConnectionManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
@@ -844,6 +852,10 @@ func (connection *Connection) close() error {
 				return err
 			}
 		}
+
+		connection.connManager.Lock()
+		delete(connection.connManager.connections, connection.cat)
+		connection.connManager.Unlock()
 
 		return connection.connManager.close()
 	} else {
