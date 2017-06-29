@@ -208,7 +208,9 @@ func (plus *ConnectionManager) listenLoop() error {
 
 		if err != nil {
 			log(1, "cm: Error: %s", err.Error())
-			if plusPacket != InvalidPacket && connection != InvalidConnection { // don't stop listening on invalid packets or invalid connections.
+			if plusPacket == InvalidPacket || connection == InvalidConnection { // don't stop listening on invalid packets or invalid connections.
+				continue
+			} else {
 				plus.Close()
 				return err
 			}
@@ -458,7 +460,7 @@ func (plus *ConnectionManager) ReadAndProcessPacket() (*Connection, *packet.PLUS
 	plusPacket, addr, err := plus.ReadPacket()
 
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, plusPacket, addr, nil, err
 	}
 
 	connection, feedbackData, err := plus.ProcessPacket(plusPacket, addr)
