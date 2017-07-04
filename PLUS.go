@@ -420,6 +420,15 @@ func (plus *ConnectionManager) GetConnection(cat uint64) (*Connection, error) {
 func (plus *ConnectionManager) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 	log(0, "handleExtendedPacket")
 	
+	i, err := plusPacket.PCFIntegrity()
+
+	if err != nil {
+		return nil, nil // ignore error. This shouldn't happen and if it does, ignore it.
+	}
+
+	if i == packet.PCF_INTEGRITY_FULL {
+		return nil, nil // don't send back if everything is integrity protected.
+	}
 
 	return plusPacket.Header(), nil
 }
