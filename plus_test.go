@@ -75,7 +75,7 @@ var _ = Describe("Plus", func() {
 			Expect(feedbackData).To(Equal(nilbuf))
 		})
 
-		It("Deals with connections", func() {
+		It("Deals with connections and packets", func() {
 			p := packet.NewBasicPLUSPacket(false, false, false, 1234, 11, 12, []byte{0x12, 0x21, 0x31, 0x13})
 			packetConn := NewMockPacketConn()
 			packetConn.PutData(p.Buffer())
