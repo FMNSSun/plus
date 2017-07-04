@@ -74,5 +74,37 @@ var _ = Describe("Plus", func() {
 			var nilbuf []byte
 			Expect(feedbackData).To(Equal(nilbuf))
 		})
+
+		It("Deals with connections", func() {
+			p := packet.NewBasicPLUSPacket(false, false, false, 1234, 11, 12, []byte{0x12, 0x21, 0x31, 0x13})
+			packetConn := NewMockPacketConn()
+			packetConn.PutData(p.Buffer())
+			manager := NewConnectionManager(packetConn)
+			go manager.Listen()
+			conn := manager.Accept()
+			buffer := make([]byte, 4096)
+			n, err := conn.Read(buffer)
+
+			Expect(err).ToNot(HaveOccurred())
+
+			buffer = buffer[:n]
+			
+			Expect(buffer).To(Equal([]byte{0x12, 0x21, 0x31, 0x13}))
+
+			p = packet.NewBasicPLUSPacket(false, false, false, 1234, 99, 88, []byte{0x33, 0x44, 0x55, 0x66})
+			packetConn.PutData(p.Buffer())
+
+			buffer = make([]byte, 4096)
+			n, err = conn.Read(buffer)
+
+			Expect(err).ToNot(HaveOccurred())
+			
+			buffer = buffer[:n]
+
+			Expect(buffer).To(Equal([]byte{0x33, 0x44, 0x55, 0x66}))
+
+			conn.Close()
+			manager.Close()
+		})
 	})
 })
