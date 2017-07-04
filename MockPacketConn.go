@@ -2,22 +2,47 @@ package PLUS
 
 import "net"
 import "time"
+import "fmt"
 
 type MockPacketConn struct {
-	DataToRead  []byte
-	DataWritten []byte
+	DataToRead  chan []byte
+   DataWritten chan []byte
 	LocalAddr_  net.Addr
 	RemoteAddr  net.Addr
 }
 
+func NewMockPacketConn() *MockPacketConn {
+	mpc := &MockPacketConn{}
+	mpc.LocalAddr_ = &MockAddr{}
+	mpc.RemoteAddr = &MockAddr{}
+	mpc.DataToRead = make(chan []byte, 16)
+	mpc.DataWritten = make(chan []byte, 16)
+	return mpc
+}
+
+func (c *MockPacketConn) PutData(buffer []byte) (int, error) {
+	fmt.Println("PUTDATA")
+	data := make([]byte, len(buffer))
+   n := copy(data, buffer)
+	c.DataToRead <- data
+	fmt.Println("PUTDATA:", data)
+	return n, nil
+}
+
 func (c *MockPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
-	n := copy(buffer, c.DataToRead)
+	fmt.Println("READDATA")
+	data := <- c.DataToRead
+	fmt.Println("GOTDATA:", data)
+	n := copy(buffer, data)
 	return n, c.RemoteAddr, nil
 }
 
 func (c *MockPacketConn) WriteTo(buffer []byte, remoteAddr net.Addr) (int, error) {
-	c.DataWritten = make([]byte, len(buffer))
-	n := copy(c.DataWritten, buffer)
+	fmt.Println("WRITEDATA")
+	data := make([]byte, len(buffer))
+	n := copy(data, buffer)
+	c.DataWritten <- data
+	fmt.Println("WRITTENDATA:", data)
 	return n, nil
 }
 
