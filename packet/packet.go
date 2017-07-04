@@ -499,6 +499,10 @@ func NewExtendedPLUSPacket(
 		length += 1
 	}
 
+	if (pcfIntegrity > PCF_INTEGRITY_FULL) {
+		return nil, errors.New("PCF Integrity is a two bit value. Can't be larger than 0x03.")
+	}
+
 	if pcfType == 0xFF {
 		//no PCF Len/PCF I and no PCF Value
 	} else {

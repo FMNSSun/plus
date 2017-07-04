@@ -16,6 +16,23 @@ func TestByteOrder(t *testing.T) {
 	}
 }
 
+// Test illegal values in constructor.
+func TestIllegalValues(t *testing.T) {
+	_, err := NewExtendedPLUSPacket(false, false, false, 1234, 11, 12, 0x00, 0x03, []byte{0xCA,0xFE}, []byte{0xBA, 0xBE})
+
+	if err == nil {
+		t.Errorf("Expected error but got none!")
+		return
+	}
+
+	_, err = NewExtendedPLUSPacket(false, false, false, 1234, 11, 12, 0x01, 0x04, []byte{0xCA,0xFE}, []byte{0xBA, 0xBE})
+
+	if err == nil {
+		t.Errorf("Expected error but got none!")
+		return
+	}
+}
+
 // Create a packet through the New... and compare
 // the result with a handcrafted buffer
 func TestSerializePacket2(t *testing.T) {
