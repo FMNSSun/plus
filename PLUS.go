@@ -499,6 +499,16 @@ func (plus *ConnectionManager) WritePacket(plusPacket *packet.PLUSPacket, addr n
 	return nil
 }
 
+// Returns true if the connection manager is closed.
+func (plus *ConnectionManager) Closed() bool {
+	plus.Lock()
+	defer plus.Unlock()
+
+	// Technically this is set before all connections have been closed
+	// but the above lock blocks until the lock is released in Close()
+	return plus.closed
+}
+
 // closes the connection manager
 func (plus *ConnectionManager) close() error {
 	log(1, "cm: Close()")
@@ -517,9 +527,9 @@ func (plus *ConnectionManager) close() error {
 	// Close all connections.
 	for k, v := range plus.connections {
 		log(1, "cm: Close(): Attempting to close CAT := ", k)
-		v.mutex.Lock()
+		v.Lock()
 		v.close()
-		v.mutex.Unlock()
+		v.Unlock()
 	}
 
 	// Close the packet connection
@@ -538,6 +548,12 @@ func (plus *ConnectionManager) Close() error {
 
 /* type Connection */
 
+// A Connection implementing net.Conn
+// Currently Set*Deadline functions are NOT supported.
+// If both an S flag was sent and received the connection will
+// automatically be closed. On creation the InitConn callback
+// of the ConnectionManager is invoked. During closing the CloseConn
+// callback is invoked. 
 type Connection struct {
 	cat          uint64
 	psn          uint32
@@ -801,6 +817,19 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 	return plusPacket, nil
 }
 
+// Retreives feedback that was received and added by the outer layer. 
+// Returns an error if no data present. If the returned bool is false
+// then no PCF request for this pcfType was ever sent. If the returned
+// data is nil then the request was sent but no feedback yet arrived.
+func (connection *Connection) GetFeedbackData(pcfType uint16) ([]byte, bool) {
+	connection.Lock()
+	defer connection.Unlock()
+
+	data, ok := connection.pcfFeedback[pcfType]
+
+	return data, ok
+}
+
 // This function needs to be called by the outer layer when it received
 // data on a feedback channel
 func (connection *Connection) AddFeedbackData(feedbackData []byte) error {
@@ -870,6 +899,34 @@ func (connection *Connection) getPCFRequest() (uint16, uint8, []byte, bool) {
 	connection.pcfElements--
 
 	return req.pcfType, req.pcfIntegrity, req.pcfValue, true
+}
+
+// Returns true if a packet with a set S flag was received
+func (connection *Connection) CloseReceived() bool {
+	connection.RLock()
+	defer connection.RUnlock()
+
+	return connection.closeReceived
+}
+
+// Returns true if a packet with a set S flag was sent
+func (connection *Connection) CloseSent() bool {
+	connection.RLock()
+	defer connection.RUnlock()
+
+	return connection.closeSent
+}
+
+
+// Returns true if the connection is closed
+func (connection *Connection) Closed() bool {
+	connection.RLock()
+	defer connection.RUnlock()
+
+	// technically this is set before the connection is COMPLETELY
+	// closed but due to the lock synchronisation the above lock blocks
+	// until the lock that's held during Close() is released. 
+	return connection.closed
 }
 
 // closes this connection.
