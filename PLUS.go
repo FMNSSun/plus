@@ -502,7 +502,27 @@ func (plus *ConnectionManager) WritePacket(plusPacket *packet.PLUSPacket, addr n
 // closes the connection manager
 func (plus *ConnectionManager) close() error {
 	log(1, "cm: Close()")
+
+	// Make double closing harmless.
+	// If the CM is in clientMode the close call on the connection.
+	// will also close the CM thus this a nested call to this close function.
+	// This check also makes this harmless.
+	if plus.closed {
+		log(1, "cm: Already closed")
+		return nil
+	}
+
 	plus.closed = true
+
+	// Close all connections.
+	for k, v := range plus.connections {
+		log(1, "cm: Close(): Attempting to close CAT := ", k)
+		v.mutex.Lock()
+		v.close()
+		v.mutex.Unlock()
+	}
+
+	// Close the packet connection
 	return plus.packetConn.Close()
 }
 
@@ -868,7 +888,7 @@ func (connection *Connection) close() error {
 		delete(connection.connManager.connections, connection.cat)
 		connection.connManager.Unlock()
 
-		return connection.connManager.close()
+		return connection.connManager.Close()
 	} else {
 		connection.connManager.Lock()
 		delete(connection.connManager.connections, connection.cat)
