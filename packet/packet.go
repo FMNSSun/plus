@@ -486,8 +486,8 @@ func NewExtendedPLUSPacket(
 
 	length := BASIC_HEADER_LEN + 1
 
-	if len(pcfValue) > 64 {
-		return nil, errors.New("PCF Value is restricted to 64 bytes maximum.")
+	if len(pcfValue) >= 64 {
+		return nil, errors.New("PCF Value is restricted to 63 bytes maximum.")
 	}
 
 	if (pcfType == 0x00) {
