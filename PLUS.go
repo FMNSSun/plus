@@ -876,6 +876,20 @@ func (connection *Connection) getPCFRequest() (uint16, uint8, []byte, bool) {
 func (connection *Connection) close() error {
 	log(1, "c: Close()")
 
+
+	// Make double closing harmless.
+	if connection.closed {
+		log(1, "c: Close(): Already closed")
+		return nil
+	}
+
+	connection.closed = true
+
+	// Close the inChannel. Necessary to unblock readers that are blocked on
+	// reading from this channel. Otherwise the Read on a connection will block
+	// forever.
+	close(connection.inChannel)
+
 	if connection.connManager.clientMode {
 		if connection.closeConn != nil {
 		err := connection.closeConn(connection)
@@ -894,9 +908,6 @@ func (connection *Connection) close() error {
 		delete(connection.connManager.connections, connection.cat)
 		connection.connManager.Unlock()
 	}
-
-	close(connection.inChannel)
-	connection.closed = true
 
 	if connection.closeConn != nil {
 		err := connection.closeConn(connection)
