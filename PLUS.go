@@ -54,7 +54,8 @@ func log(lvl int, msg string, a ...interface{}) {
 /* iface CryptoContext */
 
 // Provides callbacks to encrypt and protect or
-// decrypt and validate packets.
+// decrypt and validate packets. You must not read or write to the
+// connection during these callbacks.
 type CryptoContext interface {
 	// Encrypts and protects a packet. plusHeader is PLUS header with
 	// necessary fields zeroed out and payload is the actual payload.
@@ -74,7 +75,8 @@ type CryptoContext interface {
 /* iface FeedbackChannel */
 
 // Provides PLUS with methods to send feedback back.
-// Relevant for PCF capabilities.
+// Relevant for PCF capabilities. You must not read or write to the
+// connection during these callbacks.
 type FeedbackChannel interface {
 	// Send feedback back through. 
 	SendFeedback([]byte) error
