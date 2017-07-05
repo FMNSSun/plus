@@ -891,18 +891,23 @@ func (connection *Connection) close() error {
 	close(connection.inChannel)
 
 	if connection.connManager.clientMode {
+		var closeConnErr error
+
 		if connection.closeConn != nil {
-		err := connection.closeConn(connection)
-			if err != nil {
-				return err
-			}
+			closeConnErr = connection.closeConn(connection)
 		}
 
 		connection.connManager.Lock()
 		delete(connection.connManager.connections, connection.cat)
 		connection.connManager.Unlock()
 
-		return connection.connManager.Close()
+		var cmCloseErr error = connection.connManager.Close()
+
+		if cmCloseErr != nil {
+			return cmCloseErr
+		}
+
+		return closeConnErr
 	} else {
 		connection.connManager.Lock()
 		delete(connection.connManager.connections, connection.cat)
