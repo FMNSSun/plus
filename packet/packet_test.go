@@ -31,6 +31,15 @@ func TestIllegalValues(t *testing.T) {
 		t.Errorf("Expected error but got none!")
 		return
 	}
+
+	pcfVal := make([]byte, 64)
+
+	_, err =  NewExtendedPLUSPacket(false, false, false, 1234, 11, 12, 0x01, 0x04, pcfVal, []byte{0xBA, 0xBE})
+
+	if err == nil {
+		t.Errorf("Expected error but got none!")
+		return
+	}
 }
 
 // Create a packet through the New... and compare
