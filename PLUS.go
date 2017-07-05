@@ -76,7 +76,7 @@ type CryptoContext interface {
 
 // Provides PLUS with methods to send feedback back.
 // Relevant for PCF capabilities. You must not read or write to the
-// connection during these callbacks.
+// connection or change the connection's state during these callbacks.
 type FeedbackChannel interface {
 	// Send feedback back through. 
 	SendFeedback([]byte) error
@@ -86,6 +86,9 @@ type FeedbackChannel interface {
 
 /* type ConnectionManager */
 
+// Manages connections. You must not change attributes of the connection
+// manager during the InitConn callback. The connection manager will create new connections
+// as necessary invoking the InitConn callback during connection creation. 
 type ConnectionManager struct {
 	// map of connections
 	connections map[uint64]*Connection
@@ -173,7 +176,8 @@ func (plus *ConnectionManager) Unlock() {
 	plus.mutex.Unlock()
 }
 
-// Tells the connection manager how many go routines to use.
+// Tells the connection manager how many go routines to use for listening and
+// decryption of packets.
 func (plus *ConnectionManager) SetUseNGoRoutines(n uint8) {
 	plus.Lock()
 	defer plus.Unlock()
@@ -181,7 +185,8 @@ func (plus *ConnectionManager) SetUseNGoRoutines(n uint8) {
 	plus.useNGoRoutines = n
 }
 
-// Sets the InitConn callback.
+// Sets the InitConn callback. This is invoked during creation of a new connection by
+// the connection manager. 
 func (plus *ConnectionManager) SetInitConn(initConn func(*Connection) error) {
 	plus.Lock()
 	defer plus.Unlock()
@@ -203,7 +208,8 @@ func (plus *ConnectionManager) Accept() *Connection {
 	return conn
 }
 
-// 
+// This is the loop that handles incoming packets.
+// It is spawned by the Listen() function.
 func (plus *ConnectionManager) listenLoop() error {
 	for {
 		connection, plusPacket, addr, feedbackData, err := plus.ReadAndProcessPacket()
@@ -1100,21 +1106,25 @@ func (connection *Connection) SetSFlag(value bool) {
 	connection.defaultSFlag = value
 }
 
+// Obtains a W lock. You should not have to call this.
 func (connection *Connection) Lock() {
 	log(-1, "c: LOCK")
 	connection.mutex.Lock()
 }
 
+// Releases a W lock. You should not have to call this.
 func (connection *Connection) Unlock() {
 	log(-1, "c: UNLOCK")
 	connection.mutex.Unlock()
 }
 
+// Obtains an R lock. You should not have to call this.
 func (connection *Connection) RLock() {
 	log(-1, "c: RLOCK")
 	connection.mutex.RLock()
 }
 
+// Releases an R lock. You should not have to call this.
 func (connection *Connection) RUnlock() {
 	log(-1, "c: RUNLOCK")
 	connection.mutex.RUnlock()
