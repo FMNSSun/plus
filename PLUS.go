@@ -17,7 +17,7 @@ import m "math"
 // PRNG.
 func RandomPSN() uint32 {
 	bigNum, err := crand.Int(crand.Reader, big.NewInt(m.MaxUint32))
-	
+
 	if err != nil {
 		return rand.Uint32()
 	}
@@ -35,7 +35,7 @@ func RandomCAT() uint64 {
 var LoggerDestination io.Writer = nil
 var LoggerMutex *sync.Mutex = &sync.Mutex{}
 
-func Log( msg string, a ...interface{}) {
+func Log(msg string, a ...interface{}) {
 	log(99, msg, a...)
 }
 
@@ -78,7 +78,7 @@ type CryptoContext interface {
 // Relevant for PCF capabilities. You must not read or write to the
 // connection or change the connection's state during these callbacks.
 type FeedbackChannel interface {
-	// Send feedback back through. 
+	// Send feedback back through.
 	SendFeedback([]byte) error
 }
 
@@ -88,7 +88,7 @@ type FeedbackChannel interface {
 
 // Manages connections. You must not change attributes of the connection
 // manager during the InitConn callback. The connection manager will create new connections
-// as necessary invoking the InitConn callback during connection creation. 
+// as necessary invoking the InitConn callback during connection creation.
 type ConnectionManager struct {
 	// map of connections
 	connections map[uint64]*Connection
@@ -186,7 +186,7 @@ func (plus *ConnectionManager) SetUseNGoRoutines(n uint8) {
 }
 
 // Sets the InitConn callback. This is invoked during creation of a new connection by
-// the connection manager. 
+// the connection manager.
 func (plus *ConnectionManager) SetInitConn(initConn func(*Connection) error) {
 	plus.Lock()
 	defer plus.Unlock()
@@ -427,7 +427,7 @@ func (plus *ConnectionManager) GetConnection(cat uint64) (*Connection, error) {
 // [internal] handles packets with extended header
 func (plus *ConnectionManager) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
 	log(0, "handleExtendedPacket")
-	
+
 	i, err := plusPacket.PCFIntegrity()
 
 	if err != nil {
@@ -443,7 +443,7 @@ func (plus *ConnectionManager) handleExtendedPacket(plusPacket *packet.PLUSPacke
 
 // This will be returned (in addition to error) by ReadPacket in case of a NON-CRITICAL error
 // to distinguish between an error where the connection is broken or an error where a
-// packet was invalid. 
+// packet was invalid.
 var InvalidPacket *packet.PLUSPacket = &packet.PLUSPacket{}
 
 // This will be returned (in addition to error) by ProcessPacket in case of a NON-CRITICAL error
@@ -561,7 +561,7 @@ func (plus *ConnectionManager) Close() error {
 // If both an S flag was sent and received the connection will
 // automatically be closed. On creation the InitConn callback
 // of the ConnectionManager is invoked. During closing the CloseConn
-// callback is invoked. 
+// callback is invoked.
 type Connection struct {
 	cat          uint64
 	psn          uint32
@@ -825,7 +825,7 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 	return plusPacket, nil
 }
 
-// Retreives feedback that was received and added by the outer layer. 
+// Retreives feedback that was received and added by the outer layer.
 // Returns an error if no data present. If the returned bool is false
 // then no PCF request for this pcfType was ever sent. If the returned
 // data is nil then the request was sent but no feedback yet arrived.
@@ -925,7 +925,6 @@ func (connection *Connection) CloseSent() bool {
 	return connection.closeSent
 }
 
-
 // Returns true if the connection is closed
 func (connection *Connection) Closed() bool {
 	connection.RLock()
@@ -933,14 +932,13 @@ func (connection *Connection) Closed() bool {
 
 	// technically this is set before the connection is COMPLETELY
 	// closed but due to the lock synchronisation the above lock blocks
-	// until the lock that's held during Close() is released. 
+	// until the lock that's held during Close() is released.
 	return connection.closed
 }
 
 // closes this connection.
 func (connection *Connection) close() error {
 	log(1, "c: Close()")
-
 
 	// Make double closing harmless.
 	if connection.closed {

@@ -6,7 +6,7 @@ import "fmt"
 
 type MockPacketConn struct {
 	DataToRead  chan []byte
-   DataWritten chan []byte
+	DataWritten chan []byte
 	LocalAddr_  net.Addr
 	RemoteAddr  net.Addr
 }
@@ -23,7 +23,7 @@ func NewMockPacketConn() *MockPacketConn {
 func (c *MockPacketConn) PutData(buffer []byte) (int, error) {
 	fmt.Println("PUTDATA")
 	data := make([]byte, len(buffer))
-   n := copy(data, buffer)
+	n := copy(data, buffer)
 	c.DataToRead <- data
 	fmt.Println("PUTDATA:", data)
 	return n, nil
@@ -31,7 +31,7 @@ func (c *MockPacketConn) PutData(buffer []byte) (int, error) {
 
 func (c *MockPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
 	fmt.Println("READDATA")
-	data := <- c.DataToRead
+	data := <-c.DataToRead
 	fmt.Println("GOTDATA:", data)
 	n := copy(buffer, data)
 	return n, c.RemoteAddr, nil

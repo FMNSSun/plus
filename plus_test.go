@@ -31,10 +31,10 @@ var _ = Describe("Plus", func() {
 		})
 
 		It("Deals with new extended packets", func() {
-			p, err := packet.NewExtendedPLUSPacket(false, false, false, 1234, 11, 12, 0x01, 0x00, []byte{0xCA,0xFE}, []byte{0xBA, 0xBE})
+			p, err := packet.NewExtendedPLUSPacket(false, false, false, 1234, 11, 12, 0x01, 0x00, []byte{0xCA, 0xFE}, []byte{0xBA, 0xBE})
 
 			Expect(err).ToNot(HaveOccurred())
-			
+
 			packetConn := NewMockPacketConn()
 			packetConn.PutData(p.Buffer())
 			manager := NewConnectionManager(packetConn)
@@ -53,10 +53,10 @@ var _ = Describe("Plus", func() {
 		})
 
 		It("Deals with new extended packets with INTEGRITY_FULL", func() {
-			p, err := packet.NewExtendedPLUSPacket(false, false, false, 1234, 11, 12, 0x01, 0x03, []byte{0xCA,0xFE}, []byte{0xBA, 0xBE})
+			p, err := packet.NewExtendedPLUSPacket(false, false, false, 1234, 11, 12, 0x01, 0x03, []byte{0xCA, 0xFE}, []byte{0xBA, 0xBE})
 
 			Expect(err).ToNot(HaveOccurred())
-			
+
 			packetConn := NewMockPacketConn()
 			packetConn.PutData(p.Buffer())
 			manager := NewConnectionManager(packetConn)
@@ -88,7 +88,7 @@ var _ = Describe("Plus", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			buffer = buffer[:n]
-			
+
 			Expect(buffer).To(Equal([]byte{0x12, 0x21, 0x31, 0x13}))
 
 			p = packet.NewBasicPLUSPacket(false, false, false, 1234, 99, 88, []byte{0x33, 0x44, 0x55, 0x66})
@@ -98,7 +98,7 @@ var _ = Describe("Plus", func() {
 			n, err = conn.Read(buffer)
 
 			Expect(err).ToNot(HaveOccurred())
-			
+
 			buffer = buffer[:n]
 
 			Expect(buffer).To(Equal([]byte{0x33, 0x44, 0x55, 0x66}))

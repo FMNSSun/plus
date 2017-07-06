@@ -490,7 +490,7 @@ func NewExtendedPLUSPacket(
 		return nil, errors.New("PCF Value is restricted to 63 bytes maximum.")
 	}
 
-	if (pcfType == 0x00) {
+	if pcfType == 0x00 {
 		return nil, errors.New("PCF Type 0x00 is not actually a valid PCF Type.")
 	}
 
@@ -499,7 +499,7 @@ func NewExtendedPLUSPacket(
 		length += 1
 	}
 
-	if (pcfIntegrity > PCF_INTEGRITY_FULL) {
+	if pcfIntegrity > PCF_INTEGRITY_FULL {
 		return nil, errors.New("PCF Integrity is a two bit value. Can't be larger than 0x03.")
 	}
 
