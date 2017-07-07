@@ -494,6 +494,12 @@ func NewExtendedPLUSPacket(
 		return nil, errors.New("PCF Type 0x00 is not actually a valid PCF Type.")
 	}
 
+	if pcfType == 0xFF {
+		if pcfValue != nil {
+			return nil, errors.New("PCF Value does not exist if PCF Type is 0xFF")
+		}
+	}
+
 	//Need one more byte for PCF Type 0x00
 	if (pcfType & 0x00FF) == 0 {
 		length += 1
@@ -527,9 +533,9 @@ func NewExtendedPLUSPacket(
 		plusPacket.header[BASIC_HEADER_LEN+ofs] = 0x00
 		ofs++
 		plusPacket.header[BASIC_HEADER_LEN+ofs] = uint8(pcfType >> 8)
-	}
-
-	if pcfType != 0xFF {
+		ofs++
+		plusPacket.header[BASIC_HEADER_LEN+ofs] = (uint8(ulen(pcfValue)) << 2) | pcfIntegrity
+	} else if pcfType != 0xFF {
 		plusPacket.header[BASIC_HEADER_LEN+ofs] = uint8(pcfType & 0xFF)
 		ofs++
 		if ulen(pcfValue) == 0 {
@@ -537,6 +543,8 @@ func NewExtendedPLUSPacket(
 		}
 
 		plusPacket.header[BASIC_HEADER_LEN+ofs] = (uint8(ulen(pcfValue)) << 2) | pcfIntegrity
+	} else {
+		plusPacket.header[BASIC_HEADER_LEN+ofs] = 0xFF
 	}
 
 	ofs++
@@ -546,7 +554,7 @@ func NewExtendedPLUSPacket(
 	ofs += ulen(pcfValue)
 
 	if BASIC_HEADER_LEN+ofs != length {
-		return nil, fmt.Errorf("BUG %d, %d", ofs, length)
+		return nil, fmt.Errorf("BUG %d, %d", BASIC_HEADER_LEN+ofs, length)
 	}
 
 	plusPacket.SetPayload(payload)

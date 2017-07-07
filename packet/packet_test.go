@@ -44,6 +44,89 @@ func TestIllegalValues(t *testing.T) {
 
 // Create a packet through the New... and compare
 // the result with a handcrafted buffer
+func TestSerializePacket4(t *testing.T) {
+	packet := []byte{
+		0xD8, 0x00, 0x7F, 0xFF, //magic + flags (x bit set)
+		0x12, 0x34, 0x56, 0x78, // cat
+		0x12, 0x34, 0x56, 0x78, // cat..
+		0x13, 0x11, 0x11, 0x11, // psn
+		0x23, 0x22, 0x22, 0x22, // pse
+		0xFF, // 0xff == no pcfi, pcfvalue
+		0x99, 0x98, 0x97, 0x96} // 4 bytes payload
+
+	lFlag := true
+	rFlag := true
+	sFlag := true
+	cat := uint64(0x1234567812345678)
+	psn := uint32(0x13111111)
+	pse := uint32(0x23222222)
+	pcfType := uint16(0xFF)
+	//pcfLen := uint8(0x06)
+	pcfIntegrity := uint8(0x03)
+	var pcfValue []byte = nil
+	payload := []byte{0x99, 0x98, 0x97, 0x96}
+
+	plusPacket, err := NewExtendedPLUSPacket(lFlag, rFlag, sFlag, cat, psn, pse,
+		pcfType, pcfIntegrity, pcfValue, payload)
+
+	if err != nil {
+		t.Errorf("Error but expected none: %s", err.Error())
+		return
+	}
+
+	if !bytes.Equal(plusPacket.Buffer(), packet) {
+		fmt.Println(plusPacket.Buffer())
+		fmt.Println(packet)
+		t.Errorf("Buffers don't match!")
+		return
+	}
+}
+
+// Create a packet through the New... and compare
+// the result with a handcrafted buffer
+func TestSerializePacket3(t *testing.T) {
+	packet := []byte{
+		0xD8, 0x00, 0x7F, 0xFF, //magic + flags (x bit set)
+		0x12, 0x34, 0x56, 0x78, // cat
+		0x12, 0x34, 0x56, 0x78, // cat..
+		0x13, 0x11, 0x11, 0x11, // psn
+		0x23, 0x22, 0x22, 0x22, // pse
+		0x00, 0xCC, 0x1B, // PCF Type := 0xCC00,
+		// PCF Len 6, PCF I = 11b,
+		0x01, 0x02, 0x03, 0x04,
+		0x05, 0x06, // 6 bytes PCF value
+		0x99, 0x98, 0x97, 0x96} // 4 bytes payload
+
+	lFlag := true
+	rFlag := true
+	sFlag := true
+	cat := uint64(0x1234567812345678)
+	psn := uint32(0x13111111)
+	pse := uint32(0x23222222)
+	pcfType := uint16(0xCC00)
+	//pcfLen := uint8(0x06)
+	pcfIntegrity := uint8(0x03)
+	pcfValue := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
+	payload := []byte{0x99, 0x98, 0x97, 0x96}
+
+	plusPacket, err := NewExtendedPLUSPacket(lFlag, rFlag, sFlag, cat, psn, pse,
+		pcfType, pcfIntegrity, pcfValue, payload)
+
+	if err != nil {
+		t.Errorf("Error but expected none: %s", err.Error())
+		return
+	}
+
+	if !bytes.Equal(plusPacket.Buffer(), packet) {
+		fmt.Println(plusPacket.Buffer())
+		fmt.Println(packet)
+		t.Errorf("Buffers don't match!")
+		return
+	}
+}
+
+// Create a packet through the New... and compare
+// the result with a handcrafted buffer
 func TestSerializePacket2(t *testing.T) {
 	packet := []byte{
 		0xD8, 0x00, 0x7F, 0xFF, //magic + flags (x bit set)
