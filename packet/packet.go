@@ -131,6 +131,28 @@ func (plusPacket *PLUSPacket) PCFType() (uint16, error) {
 	return uint16(plusPacket.header[20]), nil
 }
 
+func (plusPacket *PLUSPacket) PCFTypeUnsafe() uint16 {
+	t, _ := plusPacket.PCFType()
+	return t
+}
+
+func (plusPacket *PLUSPacket) PCFIntegrityUnsafe() uint8 {
+	t, _ := plusPacket.PCFIntegrity()
+	return t
+}
+
+func (plusPacket *PLUSPacket) PCFValueUnsafe() []byte {
+	t, _ := plusPacket.PCFValue()
+	return t
+}
+
+func (plusPacket *PLUSPacket) PCFLenUnsafe() uint8 {
+	t, _ := plusPacket.PCFLen()
+	return t
+}
+
+
+
 // Returns the position of the PCF Len/PCF I byte in the
 // packet buffer.
 func (plusPacket *PLUSPacket) GetPCFLenIntegrityPos() (int, error) {
@@ -425,6 +447,7 @@ func (plusPacket *PLUSPacket) SetBuffer(buffer_ []byte) error {
 
 	plusPacket.header = buffer[:expectedLength]
 	plusPacket.payload = buffer[expectedLength:]
+
 	return nil
 }
 
@@ -488,10 +511,6 @@ func NewExtendedPLUSPacket(
 
 	if len(pcfValue) >= 64 {
 		return nil, errors.New("PCF Value is restricted to 63 bytes maximum.")
-	}
-
-	if pcfType == 0x00 {
-		return nil, errors.New("PCF Type 0x00 is not actually a valid PCF Type.")
 	}
 
 	if pcfType == 0xFF {

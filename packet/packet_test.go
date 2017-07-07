@@ -4,6 +4,8 @@ import "testing"
 import "encoding/binary"
 import "bytes"
 import "fmt"
+import "math/rand"
+import "time"
 
 // Dummy test
 func TestByteOrder(t *testing.T) {
@@ -16,16 +18,107 @@ func TestByteOrder(t *testing.T) {
 	}
 }
 
-// Test illegal values in constructor.
-func TestIllegalValues(t *testing.T) {
-	_, err := NewExtendedPLUSPacket(false, false, false, 1234, 11, 12, 0x00, 0x03, []byte{0xCA, 0xFE}, []byte{0xBA, 0xBE})
+func randomBuf() []byte {
+	packet := []byte{
+		0xD8, 0x00, 0x7F, 0xFF, //magic + flags (x bit set)
+		0x12, 0x34, 0x56, 0x78, // cat
+		0x12, 0x34, 0x56, 0x78, // cat..
+		0x13, 0x11, 0x11, 0x11, // psn
+		0x23, 0x22, 0x22, 0x22, // pse
+		0x00, 0xCC, 0x1B, // PCF Type := 0xCC00,
+		// PCF Len 6, PCF I = 11b,
+		0x01, 0x02, 0x03, 0x04,
+		0x05, 0x06, // 6 bytes PCF value
+		0x99, 0x98, 0x97, 0x96} // 4 bytes payload
 
-	if err == nil {
-		t.Errorf("Expected error but got none!")
-		return
+	n := (rand.Int() % 9) + 1
+
+	for i := 0; i < n; i++ {
+		j := rand.Int() % len(packet)
+		k := rand.Int() % 255
+		packet[j] = byte(k)
 	}
 
-	_, err = NewExtendedPLUSPacket(false, false, false, 1234, 11, 12, 0x01, 0x04, []byte{0xCA, 0xFE}, []byte{0xBA, 0xBE})
+	return packet
+}
+
+// Create a packet through the New... and compare
+// the result with a handcrafted buffer
+func TestFuzzy(t *testing.T) {
+
+	rand.Seed(time.Now().UTC().UnixNano())
+	
+	for i := 0; i < 1024*100; i++ {
+		rbuf := randomBuf()
+		plusPacket, err := NewPLUSPacket(rbuf)
+
+		if err != nil {
+			continue
+		} else {
+			l := plusPacket.PCFLenUnsafe()
+
+			if l == 0 { 
+				continue
+			}
+
+			if !bytes.Equal(plusPacket.Buffer(), rbuf) {
+				fmt.Println(plusPacket.Buffer())
+				fmt.Println(rbuf)
+				t.Errorf("Buffer mismatch 1 ")
+				return
+			}
+
+
+			if !plusPacket.XFlag() {
+				plusPacket_ := NewBasicPLUSPacket(
+					plusPacket.LFlag(),
+					plusPacket.RFlag(),
+					plusPacket.SFlag(),
+					plusPacket.CAT(),
+					plusPacket.PSN(),
+					plusPacket.PSE(),
+					plusPacket.Payload())
+
+				if !bytes.Equal(plusPacket.Buffer(), plusPacket_.Buffer()) {
+					fmt.Println(plusPacket.Buffer())
+					fmt.Println(rbuf)
+					t.Errorf("Buffer mismatch 2 ")
+					return
+				}
+			} else {
+				plusPacket_, err := NewExtendedPLUSPacket(
+					plusPacket.LFlag(),
+					plusPacket.RFlag(),
+					plusPacket.SFlag(),
+					plusPacket.CAT(),
+					plusPacket.PSN(),
+					plusPacket.PSE(),
+					plusPacket.PCFTypeUnsafe(),
+					plusPacket.PCFIntegrityUnsafe(),
+					plusPacket.PCFValueUnsafe(),
+					plusPacket.Payload())
+
+				if err != nil {
+					t.Errorf("Found error: %s %d", err.Error(), plusPacket.Buffer())
+					return
+				}
+
+				if !bytes.Equal(plusPacket.Buffer(), plusPacket_.Buffer()) {
+					fmt.Println(plusPacket.Buffer())
+					fmt.Println(rbuf)
+					t.Errorf("Buffer mismatch 3 ")
+					return
+				}
+			}			
+		}
+	}
+}
+
+
+
+// Test illegal values in constructor.
+func TestIllegalValues(t *testing.T) {
+	_, err := NewExtendedPLUSPacket(false, false, false, 1234, 11, 12, 0x01, 0x04, []byte{0xCA, 0xFE}, []byte{0xBA, 0xBE})
 
 	if err == nil {
 		t.Errorf("Expected error but got none!")
