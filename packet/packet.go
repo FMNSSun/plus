@@ -374,7 +374,8 @@ func (plusPacket *PLUSPacket) Buffer() []byte {
 
 // Sets the buffer of this packet while performing a
 // check whether the buffer contains a valid PLUS packet. You
-// might prefer using the NewPLUSPacket function.
+// might prefer using the NewPLUSPacket function. Please be aware that
+// this function will set PCF Integrity to zero if PCF Len is zero.
 func (plusPacket *PLUSPacket) SetBuffer(buffer_ []byte) error {
 	buffer := make([]byte, len(buffer_))
 	copy(buffer, buffer_)

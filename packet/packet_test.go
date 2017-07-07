@@ -42,8 +42,7 @@ func randomBuf() []byte {
 	return packet
 }
 
-// Create a packet through the New... and compare
-// the result with a handcrafted buffer
+// Fuzzy testing. 
 func TestFuzzy(t *testing.T) {
 
 	rand.Seed(time.Now().UTC().UnixNano())
@@ -58,7 +57,7 @@ func TestFuzzy(t *testing.T) {
 			l := plusPacket.PCFLenUnsafe()
 
 			if l == 0 { 
-				continue
+				continue //skip this because if PCFLen == 0 then the receiver has to set it to zero.
 			}
 
 			if !bytes.Equal(plusPacket.Buffer(), rbuf) {
