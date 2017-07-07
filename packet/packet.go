@@ -386,7 +386,7 @@ func (plusPacket *PLUSPacket) SetBuffer(buffer_ []byte) error {
 	}
 
 	// If the PCF type is 0xFF there's another PCF type byte
-	if buffer[20] == 0xFF {
+	if buffer[20] == 0x00 {
 		expectedLength += 1
 	}
 
@@ -394,9 +394,9 @@ func (plusPacket *PLUSPacket) SetBuffer(buffer_ []byte) error {
 		return errors.New("Buffer is too small. Missing second byte for PCF type.")
 	}
 
-	// If PCF type is 0x00 it means no PCF Len and no PCF I
-	if buffer[20] != 0x00 {
-		// PCF type isn't 0x00 so there's one additional byte for PCF Len/PCF I
+	// If PCF type is 0xFF it means no PCF Len and no PCF I
+	if buffer[20] != 0xFF {
+		// PCF type isn't 0xFF so there's one additional byte for PCF Len/PCF I
 		expectedLength += 1
 
 		if ulen(buffer) < expectedLength {
