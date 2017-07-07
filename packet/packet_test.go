@@ -47,7 +47,7 @@ func TestFuzzy(t *testing.T) {
 
 	rand.Seed(time.Now().UTC().UnixNano())
 	
-	for i := 0; i < 1024*100; i++ {
+	for i := 0; i < 1024*1000; i++ {
 		rbuf := randomBuf()
 		plusPacket, err := NewPLUSPacket(rbuf)
 
