@@ -727,12 +727,6 @@ func (connection *Connection) Write(data []byte) (int, error) {
 		return 0, err
 	}
 
-	if plusPacket.SFlag() { // are we sending an SFlag?
-		/* We need to set PSE to the PSN of the received S flag */
-
-		plusPacket.SetPSN(connection.closeReceivedPSN)
-	}
-
 	if connection.cryptoContext != nil {
 		_Payload, err := connection.cryptoContext.EncryptAndProtect(
 			plusPacket.HeaderWithZeroes(), data)
@@ -804,9 +798,16 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 	}
 
 	var plusPacket *packet.PLUSPacket
+	var pse uint32
 	var err error
 
 	pcfType, pcfIntegrity, pcfValue, ok := connection.getPCFRequest()
+
+	if connection.closeReceived && connection.defaultSFlag { // if we are sending a stop confirm
+		pse = connection.closeReceivedPSN // we need to set pse to the PSN of the received stop
+	} else {
+		pse = connection.pse
+	}
 
 	if ok {
 		log(2, "Pending PCF(%d,%d,%x)", pcfType, pcfIntegrity, pcfValue)
@@ -817,7 +818,7 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 			connection.defaultSFlag,
 			connection.cat,
 			connection.psn,
-			connection.pse,
+			pse,
 			pcfType,
 			pcfIntegrity,
 			pcfValue,
@@ -838,7 +839,7 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 			connection.defaultSFlag,
 			connection.cat,
 			connection.psn,
-			connection.pse,
+			pse,
 			nil)
 	}
 
