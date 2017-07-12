@@ -292,19 +292,18 @@ func (plus *ConnectionManager) listenLoop() error {
 
 		connection.Lock()
 
-
 		if connection.closeSent && plusPacket.SFlag() { // we sent a close and received a close
 			if connection.closeSentPSN == plusPacket.PSE() {
 				// Only close it if PSE matches.
 				// But as a safety mechanism also only do so if the packet is actually valid? Otherwise we ignore it.
 				// We should be able to drive the flow state back into associated.
 				if packetValid {
-					connection.close() 
+					connection.close()
 				}
 			}
 		} else if plusPacket.SFlag() {
 			connection.closeReceived = true
-		
+
 			// Only keep the PSN of the first S flag received
 			if connection.closeReceivedPSN == 0 {
 				connection.closeReceivedPSN = plusPacket.PSN()
@@ -603,12 +602,12 @@ type Connection struct {
 	// back ref to the connection manager
 	connManager *ConnectionManager
 
-	closeSent     bool
-	closeReceived bool
-	closeSentPSN	uint32
+	closeSent        bool
+	closeReceived    bool
+	closeSentPSN     uint32
 	closeReceivedPSN uint32
-	closed        bool
-	closeConn     func(connection *Connection) error
+	closed           bool
+	closeConn        func(connection *Connection) error
 
 	pcfFeedback map[uint16][]byte
 }
