@@ -292,11 +292,22 @@ func (plus *ConnectionManager) listenLoop() error {
 
 		connection.Lock()
 
-		if packetValid { // ignore S flag on invalid packets
-			if connection.closeSent && plusPacket.SFlag() {
-				connection.close() //we sent a close and received a close
-			} else if plusPacket.SFlag() {
-				connection.closeReceived = true
+
+		if connection.closeSent && plusPacket.SFlag() { // we sent a close and received a close
+			if connection.closeSentPSN == plusPacket.PSE() {
+				// Only close it if PSE matches.
+				// But as a safety mechanism also only do so if the packet is actually valid? Otherwise we ignore it.
+				// We should be able to drive the flow state back into associated.
+				if packetValid {
+					connection.close() 
+				}
+			}
+		} else if plusPacket.SFlag() {
+			connection.closeReceived = true
+		
+			// Only keep the PSN of the first S flag received
+			if connection.closeReceivedPSN == 0 {
+				connection.closeReceivedPSN = plusPacket.PSN()
 			}
 		}
 
@@ -594,6 +605,8 @@ type Connection struct {
 
 	closeSent     bool
 	closeReceived bool
+	closeSentPSN	uint32
+	closeReceivedPSN uint32
 	closed        bool
 	closeConn     func(connection *Connection) error
 
@@ -714,6 +727,12 @@ func (connection *Connection) Write(data []byte) (int, error) {
 		return 0, err
 	}
 
+	if plusPacket.SFlag() { // are we sending an SFlag?
+		/* We need to set PSE to the PSN of the received S flag */
+
+		plusPacket.SetPSN(connection.closeReceivedPSN)
+	}
+
 	if connection.cryptoContext != nil {
 		_Payload, err := connection.cryptoContext.EncryptAndProtect(
 			plusPacket.HeaderWithZeroes(), data)
@@ -735,6 +754,7 @@ func (connection *Connection) Write(data []byte) (int, error) {
 		connection.close() //received and sent an SFlag?
 	} else if plusPacket.SFlag() {
 		connection.closeSent = true
+		connection.closeSentPSN = plusPacket.PSN()
 	}
 
 	return n, err
