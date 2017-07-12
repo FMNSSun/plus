@@ -300,6 +300,11 @@ func (plus *ConnectionManager) listenLoop() error {
 				if packetValid {
 					connection.close()
 				}
+				
+				// Set closeReceivedPSN to zero again. If the packet was forged
+				// and we thus don't close the connection and it will be driven into associated again
+				// then the nodes on the path will also reset this.
+				connection.closeReceivedPSN = 0
 			}
 		} else if plusPacket.SFlag() {
 			connection.closeReceived = true
