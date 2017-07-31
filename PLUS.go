@@ -752,7 +752,9 @@ func (connection *Connection) Write(data []byte) (int, error) {
 		connection.close() //received and sent an SFlag?
 	} else if plusPacket.SFlag() {
 		connection.closeSent = true
-		connection.closeSentPSN = plusPacket.PSN()
+		if connection.closeSentPSN == 0 {
+			connection.closeSentPSN = plusPacket.PSN()
+		}
 	}
 
 	return n, err
