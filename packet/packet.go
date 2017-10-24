@@ -13,8 +13,9 @@ import "encoding/binary"
 //
 // See the plus-spec draft for more. Or ask brian :D.
 type PLUSPacket struct {
-	header  []byte
-	payload []byte
+	header   []byte
+	payload  []byte
+	complete []byte
 }
 
 // BASIC_HEADER_LEN is the length of the basic header.
@@ -110,6 +111,24 @@ func (plusPacket *PLUSPacket) Payload() []byte {
 // Sets the payload
 func (plusPacket *PLUSPacket) SetPayload(payload []byte) {
 	plusPacket.payload = payload
+	plusPacket.complete = nil // need to set this to nil because now
+	                          // header and payload may not refer to the same
+	                          // underlying buffer.
+}
+
+// Sets the payload... by overwritting the underlying buffer
+func (plusPacket *PLUSPacket) SetPayloadOverwrite(payload []byte) error {
+	capacity := cap(plusPacket.payload)
+
+	if len(payload) > capacity {
+		return errors.New("Payload is too large for internal payload buffer.")
+	}
+
+	plusPacket.payload = plusPacket.payload[:capacity]
+
+	copy(plusPacket.payload, payload)
+
+	return nil
 }
 
 // Returns the PCF Type. If there's an additional PCF Type byte
@@ -372,13 +391,43 @@ func (plusPacket *PLUSPacket) Buffer() []byte {
 	return buffer
 }
 
+// Returns the packet as raw bytes.
+// This is not a copy. This method returns nil
+// if allocation of a new buffer is necessary.
+func (plusPacket *PLUSPacket) BufferNoCopy() []byte {
+	return plusPacket.complete
+}
+
+// Sets the buffer of this packet while performing a
+// check whether the buffer contains a valid PLUS packet. You
+// might prefer using the NewPLUSPacket function. Please be aware that
+// this function will set PCF Integrity to zero if PCF Len is zero. 
+// This will copy the buffer.
+func (plusPacket *PLUSPacket) SetBuffer(buffer_ []byte) error {
+	return plusPacket.setBuffer(buffer_, true)
+}
+
+// Sets the buffer of this packet while performing a
+// check whether the buffer contains a valid PLUS packet. You
+// might prefer using the NewPLUSPacket function. Please be aware that
+// this function will set PCF Integrity to zero if PCF Len is zero. 
+// This will not copy the buffer.
+func (plusPacket *PLUSPacket) SetBufferNoCopy(buffer_ []byte) error {
+	return plusPacket.setBuffer(buffer_, false)
+}
+
 // Sets the buffer of this packet while performing a
 // check whether the buffer contains a valid PLUS packet. You
 // might prefer using the NewPLUSPacket function. Please be aware that
 // this function will set PCF Integrity to zero if PCF Len is zero.
-func (plusPacket *PLUSPacket) SetBuffer(buffer_ []byte) error {
+func (plusPacket *PLUSPacket) setBuffer(buffer_ []byte, doCopy bool) error {
 	buffer := make([]byte, len(buffer_))
-	copy(buffer, buffer_)
+	if doCopy {
+		copy(buffer, buffer_)
+	} else {
+		buffer = buffer_
+		plusPacket.complete = buffer_
+	}
 
 	if ulen(buffer) < BASIC_HEADER_LEN {
 		return errors.New("buffer is too small")
