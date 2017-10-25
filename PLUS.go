@@ -126,18 +126,22 @@ type ConnectionManager struct {
 
 	// useNGoRoutines
 	useNGoRoutines uint8
+
+	bufPool sync.Pool
 }
 
 // Creates a new connection manager (server) using packetConn as the underlying
 // packet connection.
 func NewConnectionManager(packetConn net.PacketConn) *ConnectionManager {
-	connectionManager := &ConnectionManager{
+	var connectionManager *ConnectionManager
+	connectionManager = &ConnectionManager{
 		connections:              make(map[uint64]*Connection),
 		mutex:                    &sync.Mutex{},
 		packetConn:               packetConn,
 		maxPacketSize:            8192,
 		dropUndecryptablePackets: true,
 		newConnections:           make(chan *Connection, 16),
+		bufPool:                  sync.Pool { New : func() interface{} { return allocBuf(connectionManager) } },
 	}
 
 	return connectionManager
@@ -147,7 +151,8 @@ func NewConnectionManager(packetConn net.PacketConn) *ConnectionManager {
 // and the specified connectionId will be used when sending packets. remoteAddr specifies the
 // target.
 func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, remoteAddr net.Addr) (*ConnectionManager, *Connection) {
-	connectionManager := &ConnectionManager{
+	var connectionManager *ConnectionManager
+	connectionManager = &ConnectionManager{
 		connections:              make(map[uint64]*Connection),
 		mutex:                    &sync.Mutex{},
 		packetConn:               packetConn,
@@ -156,6 +161,7 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
 		clientCAT:                connectionId,
 		dropUndecryptablePackets: true,
 		newConnections:           make(chan *Connection, 16),
+		bufPool:                  sync.Pool { New : func() interface{} { return allocBuf(connectionManager) } },
 	}
 
 	connection := NewConnection(connectionId, packetConn, remoteAddr, connectionManager)
@@ -466,9 +472,30 @@ var InvalidPacket *packet.PLUSPacket = &packet.PLUSPacket{}
 // was invalid.
 var InvalidConnection *Connection = &Connection{}
 
+// Reads a PLUS packet from the underlying PacketConn using the supplied buffer
+func (plus *ConnectionManager) ReadPacketUsing(buffer []byte) (*packet.PLUSPacket, net.Addr, error) {
+	n, addr, err := plus.packetConn.ReadFrom(buffer)
+
+	if err != nil {
+		return nil, addr, err
+	}
+
+	plusPacket, err := packet.NewPLUSPacketNoCopy(buffer[:n])
+
+	if err != nil {
+		return InvalidPacket, addr, err
+	}
+
+	return plusPacket, addr, nil
+}
+
+func allocBuf(plus *ConnectionManager) interface{} {
+	return make([]byte, plus.maxPacketSize)
+}
+
 // Reads a PLUS packet from the underlying PacketConn.
 func (plus *ConnectionManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error) {
-	buffer := make([]byte, plus.maxPacketSize)
+	buffer := plus.bufPool.Get().([]byte)
 
 	n, addr, err := plus.packetConn.ReadFrom(buffer)
 
