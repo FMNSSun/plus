@@ -22,6 +22,7 @@ type PLUSPacket struct {
 // If a packet is not at least BASIC_HEADER_LEN bytes long
 // it doesn't even have a complete basic header
 const BASIC_HEADER_LEN uint16 = 20
+const MAX_HEADER_LEN uint16 = 128
 
 // IT's MAGIC!
 const MAGIC uint32 = 0xd8007ff
@@ -421,8 +422,9 @@ func (plusPacket *PLUSPacket) SetBufferNoCopy(buffer_ []byte) error {
 // might prefer using the NewPLUSPacket function. Please be aware that
 // this function will set PCF Integrity to zero if PCF Len is zero.
 func (plusPacket *PLUSPacket) setBuffer(buffer_ []byte, doCopy bool) error {
-	buffer := make([]byte, len(buffer_))
+	var buffer []byte
 	if doCopy {
+		buffer = make([]byte, len(buffer_))
 		copy(buffer, buffer_)
 	} else {
 		buffer = buffer_
@@ -524,6 +526,57 @@ func NewPLUSPacket(buffer []byte) (*PLUSPacket, error) {
 	return &plusPacket, err
 }
 
+func WriteBasicPacket(
+	buffer []byte, 
+	lFlag bool, 
+	rFlag bool, 
+	sFlag bool, 
+	cat uint64, 
+	psn uint32, 
+	pse uint32, 
+	payload []byte) (int, []byte, error) {
+
+	requiredLength := int(BASIC_HEADER_LEN) + len(payload)
+
+	if buffer == nil {
+		buffer = make([]byte, requiredLength) //allocate buffer if none provided
+	}
+
+	if len(buffer) < requiredLength {
+		return -1, buffer, errors.New("Buffer is not big enough.")
+	}
+
+
+	// lrsx
+   // 8421
+	flags := uint8(0x00)
+
+	if lFlag {
+		flags |= uint8(0x08)
+	}
+
+	if rFlag {
+		flags |= uint8(0x04)
+	}
+
+	if sFlag {
+		flags |= uint8(0x02)
+	}
+
+	binary.BigEndian.PutUint32(buffer, (MAGIC << 4) | uint32(flags))
+	binary.BigEndian.PutUint64(buffer[4:], cat)
+	binary.BigEndian.PutUint32(buffer[12:], psn)
+	binary.BigEndian.PutUint32(buffer[16:], pse)
+
+	copy(buffer[20:], payload)
+
+	return requiredLength, buffer, nil
+}
+
+/*func WriteExtenedPacket(buffer []byte, lFlag, rFlag, sFlag, cat, psn, pse, pcfType, pcfIntegrity, pcfValue, payload []byte) {
+	
+}*/
+
 // Construct a new basic plus packet
 //  (with basic header)
 func NewBasicPLUSPacket(
@@ -537,18 +590,18 @@ func NewBasicPLUSPacket(
 
 	var plusPacket PLUSPacket
 
-	plusPacket.header = make([]byte, BASIC_HEADER_LEN)
+	_, buf, _ := WriteBasicPacket(
+		nil,
+		lFlag,
+		rFlag,
+		sFlag,
+		cat,
+		psn,
+		pse,
+		payload,
+	)
 
-	binary.BigEndian.PutUint32(plusPacket.header, MAGIC<<4)
-
-	plusPacket.SetLFlag(lFlag)
-	plusPacket.SetRFlag(rFlag)
-	plusPacket.SetSFlag(sFlag)
-	plusPacket.SetCAT(cat)
-	plusPacket.SetPSN(psn)
-	plusPacket.SetPSE(pse)
-
-	plusPacket.SetPayload(payload)
+	plusPacket.SetBufferNoCopy(buf)
 
 	return &plusPacket
 }
