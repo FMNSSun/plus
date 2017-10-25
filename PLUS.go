@@ -476,7 +476,7 @@ func (plus *ConnectionManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error
 		return nil, addr, err
 	}
 
-	plusPacket, err := packet.NewPLUSPacket(buffer[:n])
+	plusPacket, err := packet.NewPLUSPacketNoCopy(buffer[:n])
 
 	if err != nil {
 		return InvalidPacket, addr, err

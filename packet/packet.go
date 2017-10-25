@@ -501,6 +501,18 @@ func (plusPacket *PLUSPacket) setBuffer(buffer_ []byte, doCopy bool) error {
 	return nil
 }
 
+// Constructs a plus packet using the supplied buffer.
+// This will perform a check if this is a valid
+// PLUS packet. The buffer will not be copied,
+// changes to the packet or buffer will affect each
+// other
+func NewPLUSPacketNoCopy(buffer []byte) (*PLUSPacket, error) {
+	var plusPacket PLUSPacket
+	err := plusPacket.SetBufferNoCopy(buffer)
+
+	return &plusPacket, err
+}
+
 // Construct a plus packet from buffer.
 // This will perform a check if this is a valid
 // PLUS packet (in the correct wire format).
