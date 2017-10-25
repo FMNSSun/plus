@@ -128,6 +128,7 @@ type ConnectionManager struct {
 	useNGoRoutines uint8
 
 	bufPool sync.Pool
+	packetPool sync.Pool
 }
 
 // Creates a new connection manager (server) using packetConn as the underlying
@@ -142,6 +143,7 @@ func NewConnectionManager(packetConn net.PacketConn) *ConnectionManager {
 		dropUndecryptablePackets: true,
 		newConnections:           make(chan *Connection, 16),
 		bufPool:                  sync.Pool { New : func() interface{} { return allocBuf(connectionManager) } },
+		packetPool:               sync.Pool { New : func() interface{} { return &packet.PLUSPacket{} } }, 
 	}
 
 	return connectionManager
@@ -162,6 +164,7 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
 		dropUndecryptablePackets: true,
 		newConnections:           make(chan *Connection, 16),
 		bufPool:                  sync.Pool { New : func() interface{} { return allocBuf(connectionManager) } },
+		packetPool:               sync.Pool { New : func() interface{} { return &packet.PLUSPacket{} } }, 
 	}
 
 	connection := NewConnection(connectionId, packetConn, remoteAddr, connectionManager)
@@ -503,7 +506,9 @@ func (plus *ConnectionManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error
 		return nil, addr, err
 	}
 
-	plusPacket, err := packet.NewPLUSPacketNoCopy(buffer[:n])
+	plusPacket := plus.packetPool.Get().(*packet.PLUSPacket)
+
+	err = plusPacket.SetBufferNoCopy(buffer[:n])
 
 	if err != nil {
 		return InvalidPacket, addr, err
@@ -529,6 +534,41 @@ func (plus *ConnectionManager) ReadAndProcessPacket() (*Connection, *packet.PLUS
 	}
 
 	return connection, plusPacket, addr, feedbackData, nil
+}
+
+// ReadAndProcessPacketUsing. See `ReadAndProcessPacket`. Uses the supplied buffer.
+func (plus *ConnectionManager) ReadAndProcessPacketUsing(buffer []byte) (*Connection, *packet.PLUSPacket, net.Addr, []byte, error) {
+	plusPacket, addr, err := plus.ReadPacketUsing(buffer)
+
+	if err != nil {
+		return nil, plusPacket, addr, nil, err // make sure we pass plusPacket because it might be InvalidPacket
+	}
+
+	connection, feedbackData, err := plus.ProcessPacket(plusPacket, addr)
+
+	if err != nil {
+		return connection, nil, nil, nil, err // make sure we pass connection because it might be InvalidConnection
+	}
+
+	return connection, plusPacket, addr, feedbackData, nil
+}
+
+func (plus *ConnectionManager) ReturnBuffer(buffer []byte) {
+	if cap(buffer) != plus.maxPacketSize {
+		panic(fmt.Sprintf("Returned buffer of incorrect size! Wanted %d, got %d.", plus.maxPacketSize, cap(buffer)))
+	}
+
+	buffer = buffer[:plus.maxPacketSize]
+	plus.bufPool.Put(buffer)
+}
+
+func (plus *ConnectionManager) ReturnPacketAndBuffer(plusPacket *packet.PLUSPacket) {
+	plus.ReturnBuffer(plusPacket.BufferNoCopy())
+	plus.ReturnPacket(plusPacket)
+}
+
+func (plus *ConnectionManager) ReturnPacket(plusPacket *packet.PLUSPacket) {
+	plus.packetPool.Put(plusPacket)
 }
 
 // Writes a PLUS packet to the underlying PacketConn.
@@ -745,7 +785,6 @@ func (connection *Connection) Read(data []byte) (int, error) {
 // Write data to this connection.
 func (connection *Connection) Write(data []byte) (int, error) {
 	plusPacket, err := connection.PrepareNextPacket()
-	plusPacket.SetPayload(data)
 
 	connection.Lock()
 	defer connection.Unlock()
@@ -766,7 +805,9 @@ func (connection *Connection) Write(data []byte) (int, error) {
 			return 0, err
 		}
 
-		plusPacket.SetPayload(_Payload)
+		plusPacket.SetPayloadOverwrite(_Payload)
+	} else {
+		plusPacket.SetPayloadOverwrite(data)
 	}
 
 	log(0, "%s\t\t\tSending [%d,%d]: %x", connection.packetConn.LocalAddr().String(),
