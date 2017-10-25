@@ -35,7 +35,7 @@ func randomBuf() []byte {
 
 	for i := 0; i < n; i++ {
 		j := rand.Int() % len(packet)
-		k := rand.Int() % 255
+		k := rand.Int() % 256
 		packet[j] = byte(k)
 	}
 
@@ -47,7 +47,7 @@ func TestFuzzy(t *testing.T) {
 
 	rand.Seed(time.Now().UTC().UnixNano())
 	
-	for i := 0; i < 1024*1000; i++ {
+	for i := 0; i < 1024*1200; i++ {
 		rbuf := randomBuf()
 		plusPacket, err := NewPLUSPacket(rbuf)
 
