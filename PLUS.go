@@ -386,9 +386,6 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 		connection = NewConnection(cat, plus.packetConn, remoteAddr, plus)
 		plus.connections[cat] = connection
 
-		connection.sendBuffer = make([]byte, plus.maxPacketSize)
-		connection.headerBuffer = make([]byte, 256)
-
 		if plus.initConn != nil {
 			err := plus.initConn(connection)
 
@@ -721,6 +718,8 @@ func NewConnection(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr, c
 	connection.connManager = connManager
 	connection.inChannel = make(chan *packetReceived, 16)
 	connection.pcfFeedback = make(map[uint16][]byte)
+	connection.sendBuffer = make([]byte, connManager.maxPacketSize)
+	connection.headerBuffer = make([]byte, 256)
 
 	return &connection
 }
@@ -820,10 +819,12 @@ func (connection *Connection) Write(data []byte) (int, error) {
 		payload = data
 	}
 
+	//fmt.Printf("headerLen := %d, len(payload) := %d, cap(sendBuffer) := %d, s := %d\n",
+	//	headerLen, len(payload), cap(connection.sendBuffer), headerLen + len(payload))
 	sendbuffer := connection.sendBuffer[:(headerLen + len(payload))] // resize
 	copy(sendbuffer[headerLen:], payload) // copy payload into it
 
-	n, err := connection.packetConn.WriteTo(connection.sendBuffer, connection.currentRemoteAddr)
+	n, err := connection.packetConn.WriteTo(sendbuffer, connection.currentRemoteAddr)
 
 	if connection.closeReceived && connection.defaultSFlag {
 		connection.close() //received and sending an SFlag?
