@@ -837,11 +837,15 @@ func (connection *Connection) Write(data []byte) (int, error) {
 		}
 	}
 
+	l := len(sendbuffer)
 	remoteAddr := connection.currentRemoteAddr
-
+	buffer := (connection.connManager.bufPool.Get().([]byte))[:l]
+	copy(buffer, sendbuffer)
 	connection.mutex.Unlock()
 
-	n, err := connection.packetConn.WriteTo(sendbuffer, remoteAddr)
+	n, err := connection.packetConn.WriteTo(buffer, remoteAddr)
+
+	connection.connManager.ReturnBuffer(buffer)
 
 	return n, err
 }
