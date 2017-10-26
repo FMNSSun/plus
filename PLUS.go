@@ -787,7 +787,8 @@ func (connection *Connection) Read(data []byte) (int, error) {
 	return n, nil
 }
 
-// Write data to this connection.
+// Write data to this connection. 
+// This will perform encryption if a crypto context is set.
 func (connection *Connection) Write(data []byte) (int, error) {
 	connection.Lock()
 	defer connection.Unlock()
@@ -865,6 +866,7 @@ func (connection *Connection) DecryptAndValidate(plusPacket *packet.PLUSPacket) 
 	return connection.cryptoContext.DecryptAndValidate(plusPacket.HeaderWithZeroes(), plusPacket.Payload())
 }
 
+// internal method. Returns psn, length of the header and error.
 func (connection *Connection) prepareNextRaw(buffer []byte) (uint32, int, error) {
 	// we assume we're already holding the lock.
 	connection.psn += 1
