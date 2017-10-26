@@ -526,6 +526,12 @@ func NewPLUSPacket(buffer []byte) (*PLUSPacket, error) {
 	return &plusPacket, err
 }
 
+// Writes a basic packet into the buffer. The buffer must be large
+// enough to contain the packet. Nil may be passed as buffer in which
+// case this function will allocated a buffer for you. The buffer may already
+// have been modified when an error is returned. 
+// Returns the amount of bytes written, the buffer (which will be the same as
+// the supplied buffer if not Nil was supplied) and an error (if any).
 func WriteBasicPacket(
 	buffer []byte, 
 	lFlag bool, 
@@ -573,9 +579,118 @@ func WriteBasicPacket(
 	return requiredLength, buffer, nil
 }
 
-/*func WriteExtenedPacket(buffer []byte, lFlag, rFlag, sFlag, cat, psn, pse, pcfType, pcfIntegrity, pcfValue, payload []byte) {
+// Writes an extended packet into the buffer. The buffer must be large
+// enough to contain the packet. Nil may be passed as buffer in which
+// case this function will allocated a buffer for you. The buffer may already
+// have been modified when an error is returned. 
+// Returns the amount of bytes written, the buffer (which will be the same as
+// the supplied buffer if not Nil was supplied) and an error (if any).
+func WriteExtendedPacket(
+	buffer []byte, 
+	lFlag bool,
+	rFlag bool,
+	sFlag bool,
+	cat uint64,
+	psn uint32, 
+	pse uint32, 
+	pcfType uint16, 
+	pcfIntegrity uint8, 
+	pcfValue []byte, 
+	payload []byte) (int, []byte, error) {
 	
-}*/
+	length := BASIC_HEADER_LEN + 1
+
+	if len(pcfValue) >= 64 {
+		return -1, nil, errors.New("PCF Value is restricted to 63 bytes maximum.")
+	}
+
+	if pcfType == 0xFF {
+		if pcfValue != nil {
+			return -1, nil, errors.New("PCF Value does not exist if PCF Type is 0xFF")
+		}
+	}
+
+	//Need one more byte for PCF Type 0x00
+	if (pcfType & 0x00FF) == 0 {
+		length += 1
+	}
+
+	if pcfIntegrity > PCF_INTEGRITY_FULL {
+		return -1, nil, errors.New("PCF Integrity is a two bit value. Can't be larger than 0x03.")
+	}
+
+	if pcfType == 0xFF {
+		//no PCF Len/PCF I and no PCF Value
+	} else {
+		length += 1 //need one byte for PCF Len/PCF I
+		length += ulen(pcfValue)
+	}
+
+	requiredLength := int(length) + len(payload)
+
+	if buffer == nil {
+		buffer = make([]byte, requiredLength) //allocate buffer if none provided
+	}
+
+	if len(buffer) < requiredLength {
+		return -1, buffer, errors.New("Buffer is not big enough.")
+	}
+
+	// lrsx
+   // 8421
+	flags := uint8(0x01) // x flag must be set
+
+	if lFlag {
+		flags |= uint8(0x08)
+	}
+
+	if rFlag {
+		flags |= uint8(0x04)
+	}
+
+	if sFlag {
+		flags |= uint8(0x02)
+	}
+
+	binary.BigEndian.PutUint32(buffer, (MAGIC << 4) | uint32(flags))
+	binary.BigEndian.PutUint64(buffer[4:], cat)
+	binary.BigEndian.PutUint32(buffer[12:], psn)
+	binary.BigEndian.PutUint32(buffer[16:], pse)
+
+	ofs := uint16(0)
+
+	if (pcfType & 0x00FF) == 0 {
+		buffer[BASIC_HEADER_LEN+ofs] = 0x00
+		ofs++
+		buffer[BASIC_HEADER_LEN+ofs] = uint8(pcfType >> 8)
+		ofs++
+		buffer[BASIC_HEADER_LEN+ofs] = (uint8(ulen(pcfValue)) << 2) | pcfIntegrity
+	} else if pcfType != 0xFF {
+		buffer[BASIC_HEADER_LEN+ofs] = uint8(pcfType & 0xFF)
+		ofs++
+		if ulen(pcfValue) == 0 {
+			pcfIntegrity = 0 //spec says if len is 0 integrity is unspecified and must be set to zero
+		}
+
+		buffer[BASIC_HEADER_LEN+ofs] = (uint8(ulen(pcfValue)) << 2) | pcfIntegrity
+	} else {
+		buffer[BASIC_HEADER_LEN+ofs] = 0xFF
+	}
+
+	ofs++
+
+	copy(buffer[(BASIC_HEADER_LEN+ofs):], pcfValue)
+
+	ofs += ulen(pcfValue)
+
+	if int(BASIC_HEADER_LEN+ofs) != (requiredLength-len(payload)) {
+		return -1, nil, fmt.Errorf("BUG %d, %d", BASIC_HEADER_LEN+ofs, length)
+	}
+
+	copy(buffer[(BASIC_HEADER_LEN+ofs):], payload)
+
+	return requiredLength, buffer, nil
+}
 
 // Construct a new basic plus packet
 //  (with basic header)
@@ -622,76 +737,21 @@ func NewExtendedPLUSPacket(
 
 	var plusPacket PLUSPacket
 
-	length := BASIC_HEADER_LEN + 1
+	_, buf, err := WriteExtendedPacket(
+		nil, 
+		lFlag,
+		rFlag,
+		sFlag,
+		cat,
+		psn,
+		pse,
+		pcfType,
+		pcfIntegrity,
+		pcfValue,
+		payload,
+	)
 
-	if len(pcfValue) >= 64 {
-		return nil, errors.New("PCF Value is restricted to 63 bytes maximum.")
-	}
+	plusPacket.SetBufferNoCopy(buf)
 
-	if pcfType == 0xFF {
-		if pcfValue != nil {
-			return nil, errors.New("PCF Value does not exist if PCF Type is 0xFF")
-		}
-	}
-
-	//Need one more byte for PCF Type 0x00
-	if (pcfType & 0x00FF) == 0 {
-		length += 1
-	}
-
-	if pcfIntegrity > PCF_INTEGRITY_FULL {
-		return nil, errors.New("PCF Integrity is a two bit value. Can't be larger than 0x03.")
-	}
-
-	if pcfType == 0xFF {
-		//no PCF Len/PCF I and no PCF Value
-	} else {
-		length += 1 //need one byte for PCF Len/PCF I
-		length += ulen(pcfValue)
-	}
-
-	plusPacket.header = make([]byte, length)
-
-	binary.BigEndian.PutUint32(plusPacket.header, (MAGIC<<4)|1)
-
-	plusPacket.SetLFlag(lFlag)
-	plusPacket.SetRFlag(rFlag)
-	plusPacket.SetSFlag(sFlag)
-	plusPacket.SetCAT(cat)
-	plusPacket.SetPSN(psn)
-	plusPacket.SetPSE(pse)
-
-	ofs := uint16(0)
-
-	if (pcfType & 0x00FF) == 0 {
-		plusPacket.header[BASIC_HEADER_LEN+ofs] = 0x00
-		ofs++
-		plusPacket.header[BASIC_HEADER_LEN+ofs] = uint8(pcfType >> 8)
-		ofs++
-		plusPacket.header[BASIC_HEADER_LEN+ofs] = (uint8(ulen(pcfValue)) << 2) | pcfIntegrity
-	} else if pcfType != 0xFF {
-		plusPacket.header[BASIC_HEADER_LEN+ofs] = uint8(pcfType & 0xFF)
-		ofs++
-		if ulen(pcfValue) == 0 {
-			pcfIntegrity = 0 //spec says if len is 0 integrity is unspecified and must be set to zero
-		}
-
-		plusPacket.header[BASIC_HEADER_LEN+ofs] = (uint8(ulen(pcfValue)) << 2) | pcfIntegrity
-	} else {
-		plusPacket.header[BASIC_HEADER_LEN+ofs] = 0xFF
-	}
-
-	ofs++
-
-	copy(plusPacket.header[(BASIC_HEADER_LEN+ofs):], pcfValue)
-
-	ofs += ulen(pcfValue)
-
-	if BASIC_HEADER_LEN+ofs != length {
-		return nil, fmt.Errorf("BUG %d, %d", BASIC_HEADER_LEN+ofs, length)
-	}
-
-	plusPacket.SetPayload(payload)
-
-	return &plusPacket, nil
+	return &plusPacket, err
 }

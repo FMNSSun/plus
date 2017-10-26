@@ -80,6 +80,7 @@ func TestFuzzy(t *testing.T) {
 
 				if !bytes.Equal(plusPacket.Buffer(), plusPacket_.Buffer()) {
 					fmt.Println(plusPacket.Buffer())
+					fmt.Println(plusPacket_.Buffer())
 					fmt.Println(rbuf)
 					t.Errorf("Buffer mismatch 2 ")
 					return
@@ -104,6 +105,7 @@ func TestFuzzy(t *testing.T) {
 
 				if !bytes.Equal(plusPacket.Buffer(), plusPacket_.Buffer()) {
 					fmt.Println(plusPacket.Buffer())
+					fmt.Println(plusPacket_.Buffer())
 					fmt.Println(rbuf)
 					t.Errorf("Buffer mismatch 3 ")
 					return
