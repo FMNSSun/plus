@@ -175,21 +175,21 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
 
 // Obtain a W lock to the connection manager. You shouldn't have to call this.
 func (plus *ConnectionManager) Lock() {
-	log(0, "cm: LOCK")
+	//log(0, "cm: LOCK")
 	plus.mutex.Lock()
 }
 
 // Release a W lock to the connection manager. Neither should you have to call this.
 func (plus *ConnectionManager) Unlock() {
-	log(0, "cm: UNLOCK")
+	//log(0, "cm: UNLOCK")
 	plus.mutex.Unlock()
 }
 
 // Tells the connection manager how many go routines to use for listening and
 // decryption of packets.
 func (plus *ConnectionManager) SetUseNGoRoutines(n uint8) {
-	plus.Lock()
-	defer plus.Unlock()
+	plus.mutex.Lock()
+	defer plus.mutex.Unlock()
 
 	plus.useNGoRoutines = n
 }
@@ -197,8 +197,8 @@ func (plus *ConnectionManager) SetUseNGoRoutines(n uint8) {
 // Sets the InitConn callback. This is invoked during creation of a new connection by
 // the connection manager.
 func (plus *ConnectionManager) SetInitConn(initConn func(*Connection) error) {
-	plus.Lock()
-	defer plus.Unlock()
+	plus.mutex.Lock()
+	defer plus.mutex.Unlock()
 
 	plus.initConn = initConn
 }
@@ -235,11 +235,11 @@ func (plus *ConnectionManager) listenLoop() error {
 
 		log(0, "cm: Inpacket")
 
-		connection.Lock()
+		connection.mutex.Lock()
 		connection.currentRemoteAddr = addr
-		connection.Unlock()
+		connection.mutex.Unlock()
 
-		connection.RLock()
+		connection.mutex.RLock()
 
 		if feedbackData != nil && connection.feedbackChannel != nil {
 			log(0, "cm: Feedback data available!")
@@ -297,9 +297,9 @@ func (plus *ConnectionManager) listenLoop() error {
 			}
 		}
 
-		connection.RUnlock()
+		connection.mutex.RUnlock()
 
-		connection.Lock()
+		connection.mutex.Lock()
 
 		if connection.closeSent && plusPacket.SFlag() { // we sent a close and received a close
 			if connection.closeSentPSN == plusPacket.PSE() {
@@ -324,7 +324,7 @@ func (plus *ConnectionManager) listenLoop() error {
 			}
 		}
 
-		connection.Unlock()
+		connection.mutex.Unlock()
 	}
 }
 
@@ -338,9 +338,9 @@ func (plus *ConnectionManager) listenLoop() error {
 func (plus *ConnectionManager) Listen() error {
 	log(1, "cm: Listen()")
 
-	plus.Lock()
+	plus.mutex.Lock()
 	plus.listenMode = true
-	plus.Unlock()
+	plus.mutex.Unlock()
 
 	if plus.useNGoRoutines == 0 {
 		return plus.listenLoop()
@@ -362,17 +362,17 @@ func (plus *ConnectionManager) LocalAddr() net.Addr {
 // needs to be sent back through an encrypted feedback channel or
 // nil when nothing is to send back.
 func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remoteAddr net.Addr) (*Connection, []byte, error) {
-	log(0, "%s\t\t\tProcessing packet [%d/%d]: %x", plus.packetConn.LocalAddr().String(),
+	/*log(0, "%s\t\t\tProcessing packet [%d/%d]: %x", plus.packetConn.LocalAddr().String(),
 		plusPacket.PSN(), plusPacket.PSE(),
-		plusPacket.Header())
+		plusPacket.Header())*/
 
-	plus.Lock()
+	plus.mutex.Lock()
 
 	cat := plusPacket.CAT()
 
 	if plus.clientMode {
 		if cat != plus.clientCAT {
-			plus.Unlock()
+			plus.mutex.Unlock()
 			return InvalidConnection, nil, fmt.Errorf("Expected CAT := %d but got %d", plus.clientCAT, cat)
 		}
 
@@ -399,10 +399,10 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 			plus.newConnections <- connection
 		}
 	}
-	plus.Unlock()
+	plus.mutex.Unlock()
 
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	if plusPacket.PSN() == 1 && plus.clientMode {
 		connection.queuePCFRequest(packet.PCF_TYPE_HOP_COUNT, packet.PCF_INTEGRITY_ZERO, []byte{0x00}) // send a HOP_COUNT request
@@ -421,8 +421,8 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 
 // Updates the CAT of a connection (for connections with changing CATs)
 func (plus *ConnectionManager) UpdateCAT(oldCat uint64, newCat uint64) error {
-	plus.Lock()
-	defer plus.Unlock()
+	plus.mutex.Lock()
+	defer plus.mutex.Unlock()
 
 	oldconnection, ok := plus.connections[oldCat]
 	if !ok {
@@ -438,8 +438,8 @@ func (plus *ConnectionManager) UpdateCAT(oldCat uint64, newCat uint64) error {
 
 // Returns the connection assigned to the specified cat.
 func (plus *ConnectionManager) GetConnection(cat uint64) (*Connection, error) {
-	plus.Lock()
-	defer plus.Unlock()
+	plus.mutex.Lock()
+	defer plus.mutex.Unlock()
 
 	connection, ok := plus.connections[cat]
 	if !ok {
@@ -450,7 +450,7 @@ func (plus *ConnectionManager) GetConnection(cat uint64) (*Connection, error) {
 
 // [internal] handles packets with extended header
 func (plus *ConnectionManager) handleExtendedPacket(plusPacket *packet.PLUSPacket) ([]byte, error) {
-	log(0, "handleExtendedPacket")
+	//log(0, "handleExtendedPacket")
 
 	i, err := plusPacket.PCFIntegrity()
 
@@ -591,8 +591,8 @@ func (plus *ConnectionManager) WritePacket(plusPacket *packet.PLUSPacket, addr n
 
 // Returns true if the connection manager is closed.
 func (plus *ConnectionManager) Closed() bool {
-	plus.Lock()
-	defer plus.Unlock()
+	plus.mutex.Lock()
+	defer plus.mutex.Unlock()
 
 	// Technically this is set before all connections have been closed
 	// but the above lock blocks until the lock is released in Close()
@@ -628,8 +628,8 @@ func (plus *ConnectionManager) close() error {
 
 // Closes the connection manager.
 func (plus *ConnectionManager) Close() error {
-	plus.Lock()
-	defer plus.Unlock()
+	plus.mutex.Lock()
+	defer plus.mutex.Unlock()
 
 	return plus.close()
 }
@@ -726,40 +726,40 @@ func NewConnection(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr, c
 
 // Changes the CAT
 func (connection *Connection) SetCAT(newCat uint64) {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	connection.cat = newCat
 }
 
 // Returns the CAT.
 func (connection *Connection) CAT() uint64 {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.cat
 }
 
 // Returns the PSE.
 func (connection *Connection) PSE() uint32 {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.pse
 }
 
 // Returns the PSN.
 func (connection *Connection) PSN() uint32 {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.psn
 }
 
 // Adds received PCF feedback data
 func (connection *Connection) AddPCFFeedback(feedbackData []byte) error {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	log(1, "%s\t\t\tReceived PCF feedback: %x", connection.packetConn.LocalAddr().String(), feedbackData)
 
@@ -790,8 +790,8 @@ func (connection *Connection) Read(data []byte) (int, error) {
 // Write data to this connection.
 // This will perform encryption if a crypto context is set.
 func (connection *Connection) Write(data []byte) (int, error) {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	var payload []byte
 
@@ -842,8 +842,8 @@ func (connection *Connection) Write(data []byte) (int, error) {
 // Send feedback data. Don't call this if you use the Listen() method
 // of the ConnectionManager or if you don't use a FeedbackChannel
 func (connection *Connection) SendFeedback(data []byte) error {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.feedbackChannel.SendFeedback(data)
 }
@@ -851,8 +851,8 @@ func (connection *Connection) SendFeedback(data []byte) error {
 // Encrypt and protect a packet. Don't call this if you use the Listen() method
 // of the ConnectionManager or if you don't use a CryptoContext.
 func (connection *Connection) EncryptAndProtect(plusPacket *packet.PLUSPacket) ([]byte, error) {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.cryptoContext.EncryptAndProtect(plusPacket.HeaderWithZeroes(), plusPacket.Payload())
 }
@@ -860,8 +860,8 @@ func (connection *Connection) EncryptAndProtect(plusPacket *packet.PLUSPacket) (
 // Decrypt and validate a packet. Don't call this if you use the Listen() method
 // of the ConnectionManager or if you don't use a CryptoContext.
 func (connection *Connection) DecryptAndValidate(plusPacket *packet.PLUSPacket) ([]byte, bool, error) {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.cryptoContext.DecryptAndValidate(plusPacket.HeaderWithZeroes(), plusPacket.Payload())
 }
@@ -934,9 +934,9 @@ func (connection *Connection) prepareNextRaw(buffer []byte) (uint32, int, error)
 // and returns this. The upper layer should then set the payload of the packet and hand it over
 // to `WritePacket`.
 func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
-	connection.Lock()
+	connection.mutex.Lock()
 	defer func() {
-		connection.Unlock()
+		connection.mutex.Unlock()
 	}()
 
 	// Advance PSN (initialized to zero)
@@ -1000,8 +1000,8 @@ func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 // then no PCF request for this pcfType was ever sent. If the returned
 // data is nil then the request was sent but no feedback yet arrived.
 func (connection *Connection) GetFeedbackData(pcfType uint16) ([]byte, bool) {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	data, ok := connection.pcfFeedback[pcfType]
 
@@ -1011,8 +1011,8 @@ func (connection *Connection) GetFeedbackData(pcfType uint16) ([]byte, bool) {
 // This function needs to be called by the outer layer when it received
 // data on a feedback channel
 func (connection *Connection) AddFeedbackData(feedbackData []byte) error {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	plusPacket, err := packet.NewPLUSPacket(feedbackData)
 
@@ -1060,8 +1060,8 @@ func (connection *Connection) queuePCFRequest(pcfType uint16, pcfIntegrity uint8
 
 // Queues a PCF request.
 func (connection *Connection) QueuePCFRequest(pcfType uint16, pcfIntegrity uint8, pcfValue []byte) error {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	return connection.queuePCFRequest(pcfType, pcfIntegrity, pcfValue)
 }
@@ -1081,24 +1081,24 @@ func (connection *Connection) getPCFRequest() (uint16, uint8, []byte, bool) {
 
 // Returns true if a packet with a set S flag was received
 func (connection *Connection) CloseReceived() bool {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.closeReceived
 }
 
 // Returns true if a packet with a set S flag was sent
 func (connection *Connection) CloseSent() bool {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.closeSent
 }
 
 // Returns true if the connection is closed
 func (connection *Connection) Closed() bool {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	// technically this is set before the connection is COMPLETELY
 	// closed but due to the lock synchronisation the above lock blocks
@@ -1159,8 +1159,8 @@ func (connection *Connection) close() error {
 
 // Closes this connection.
 func (connection *Connection) Close() error {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	return connection.close()
 }
@@ -1172,129 +1172,129 @@ func (connection *Connection) LocalAddr() net.Addr {
 
 // Returns the remote address.
 func (connection *Connection) RemoteAddr() net.Addr {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.currentRemoteAddr
 }
 
 // Changes the remote address.
 func (connection *Connection) SetRemoteAddr(remoteAddr net.Addr) {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	connection.currentRemoteAddr = remoteAddr
 }
 
 // Sets the CloseConn callback
 func (connection *Connection) SetCloseConn(closeConn func(connection *Connection) error) {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	connection.closeConn = closeConn
 }
 
 // Sets the crypto context.
 func (connection *Connection) SetCryptoContext(cryptoContext CryptoContext) {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	connection.cryptoContext = cryptoContext
 }
 
 // Returns the crypto context.
 func (connection *Connection) CryptoContext() CryptoContext {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.cryptoContext
 }
 
 // Sets the feedback channel.
 func (connection *Connection) SetFeedbackChannel(feedbackChannel FeedbackChannel) {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	connection.feedbackChannel = feedbackChannel
 }
 
 // Returns the feedback channel.
 func (connection *Connection) FeedbackChannel() FeedbackChannel {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.feedbackChannel
 }
 
 // Returns the default L flag.
 func (connection *Connection) LFlag() bool {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.defaultLFlag
 }
 
 // Returns the default R flag.
 func (connection *Connection) RFlag() bool {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.defaultRFlag
 }
 
 // Returns the default S flag
 func (connection *Connection) SFlag() bool {
-	connection.RLock()
-	defer connection.RUnlock()
+	connection.mutex.RLock()
+	defer connection.mutex.RUnlock()
 
 	return connection.defaultSFlag
 }
 
 // Sets the default L flag
 func (connection *Connection) SetLFlag(value bool) {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	connection.defaultLFlag = value
 }
 
 // Sets the default R flag
 func (connection *Connection) SetRFlag(value bool) {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	connection.defaultRFlag = value
 }
 
 // Sets the default S flag
 func (connection *Connection) SetSFlag(value bool) {
-	connection.Lock()
-	defer connection.Unlock()
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
 
 	connection.defaultSFlag = value
 }
 
 // Obtains a W lock. You should not have to call this.
 func (connection *Connection) Lock() {
-	log(-1, "c: LOCK")
+	//log(-1, "c: LOCK")
 	connection.mutex.Lock()
 }
 
 // Releases a W lock. You should not have to call this.
 func (connection *Connection) Unlock() {
-	log(-1, "c: UNLOCK")
+	//log(-1, "c: UNLOCK")
 	connection.mutex.Unlock()
 }
 
 // Obtains an R lock. You should not have to call this.
 func (connection *Connection) RLock() {
-	log(-1, "c: RLOCK")
+	//log(-1, "c: RLOCK")
 	connection.mutex.RLock()
 }
 
 // Releases an R lock. You should not have to call this.
 func (connection *Connection) RUnlock() {
-	log(-1, "c: RUNLOCK")
+	//log(-1, "c: RUNLOCK")
 	connection.mutex.RUnlock()
 }
 
