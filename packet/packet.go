@@ -306,6 +306,12 @@ func (plusPacket *PLUSPacket) PCFValueUnprotected() ([]byte, error) {
 	return plusPacket.header[pcfILenIndex+1+offset : pcfILenIndex+1+int(pcfLen)], nil
 }
 
+// Copy the header from headerBuffer to targetBuffer and zero out
+// bytes that aren't integrity protected. Callers of this method are strongly
+// advised to check whether headerBuffer and targetBuffer are actually big enough
+// otherwise random things may happen as this function does not check whether the
+// buffer contains a valid buffer or not... it is assumed that all the necessary
+// checks have been done BEFORE calling this function. 
 func HeaderWithZeroesRaw(headerBuffer []byte, targetBuffer []byte) {
 	copy(targetBuffer, headerBuffer)
 
