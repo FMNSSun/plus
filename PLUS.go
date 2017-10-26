@@ -386,6 +386,9 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 		connection = NewConnection(cat, plus.packetConn, remoteAddr, plus)
 		plus.connections[cat] = connection
 
+		connection.sendBuffer = make([]byte, plus.maxPacketSize)
+		connection.headerBuffer = make([]byte, 256)
+
 		if plus.initConn != nil {
 			err := plus.initConn(connection)
 
@@ -682,6 +685,9 @@ type Connection struct {
 	closeConn        func(connection *Connection) error
 
 	pcfFeedback map[uint16][]byte
+
+	sendBuffer []byte
+	headerBuffer []byte
 }
 
 type pcfRequest struct {
@@ -784,44 +790,47 @@ func (connection *Connection) Read(data []byte) (int, error) {
 
 // Write data to this connection.
 func (connection *Connection) Write(data []byte) (int, error) {
-	plusPacket, err := connection.PrepareNextPacket()
-
 	connection.Lock()
 	defer connection.Unlock()
+
+	var payload []byte
 
 	if connection.closed {
 		return 0, ErrConnClosed
 	}
+	
+	psn, headerLen, err := connection.prepareNextRaw(connection.sendBuffer)
 
 	if err != nil {
 		return 0, err
 	}
 
 	if connection.cryptoContext != nil {
+		targetBuffer := connection.headerBuffer[:headerLen]
+		packet.HeaderWithZeroesRaw(connection.sendBuffer[:headerLen], targetBuffer)
 		_Payload, err := connection.cryptoContext.EncryptAndProtect(
-			plusPacket.HeaderWithZeroes(), data)
+			targetBuffer, data)
 
 		if err != nil {
 			return 0, err
 		}
 
-		plusPacket.SetPayloadOverwrite(_Payload)
+		payload = _Payload
 	} else {
-		plusPacket.SetPayloadOverwrite(data)
+		payload = data
 	}
 
-	log(0, "%s\t\t\tSending [%d,%d]: %x", connection.packetConn.LocalAddr().String(),
-		plusPacket.PSN(), plusPacket.PSE(),
-		plusPacket.Header())
+	sendbuffer := connection.sendBuffer[:(headerLen + len(payload))] // resize
+	copy(sendbuffer[headerLen:], payload) // copy payload into it
 
-	n, err := connection.packetConn.WriteTo(plusPacket.Buffer(), connection.currentRemoteAddr)
+	n, err := connection.packetConn.WriteTo(connection.sendBuffer, connection.currentRemoteAddr)
 
-	if connection.closeReceived && plusPacket.SFlag() {
-		connection.close() //received and sent an SFlag?
-	} else if plusPacket.SFlag() {
+	if connection.closeReceived && connection.defaultSFlag {
+		connection.close() //received and sending an SFlag?
+	} else if connection.defaultSFlag { // ... just sending an SFlag?
 		connection.closeSent = true
 		if connection.closeSentPSN == 0 {
-			connection.closeSentPSN = plusPacket.PSN()
+			connection.closeSentPSN = psn
 		}
 	}
 
@@ -853,6 +862,69 @@ func (connection *Connection) DecryptAndValidate(plusPacket *packet.PLUSPacket) 
 	defer connection.RUnlock()
 
 	return connection.cryptoContext.DecryptAndValidate(plusPacket.HeaderWithZeroes(), plusPacket.Payload())
+}
+
+func (connection *Connection) prepareNextRaw(buffer []byte) (uint32, int, error) {
+	// we assume we're already holding the lock.
+	connection.psn += 1
+
+	if connection.psn == 0 {
+		connection.psn = 1
+	}
+
+	pcfType, pcfIntegrity, pcfValue, ok := connection.getPCFRequest()
+
+	var pse uint32
+	var n int
+	var err error
+
+	if connection.closeReceived && connection.defaultSFlag { // if we are sending a stop confirm
+		pse = connection.closeReceivedPSN // we need to set pse to the PSN of the received stop
+	} else {
+		pse = connection.pse
+	}
+
+	if ok {
+		log(2, "Pending PCF(%d,%d,%x)", pcfType, pcfIntegrity, pcfValue)
+		// Pending PCF, send extended packet
+		n, _, err = packet.WriteExtendedPacket(
+			buffer, 
+			connection.defaultLFlag,
+			connection.defaultRFlag,
+			connection.defaultSFlag,
+			connection.cat,
+			connection.psn,
+			pse,
+			pcfType,
+			pcfIntegrity,
+			pcfValue,
+			nil)
+
+		if err != nil {
+			return 0, -1, err
+		}
+
+		// Set value to nil in pcfFeedback map to indicate
+		// that this request was sent
+		connection.pcfFeedback[pcfType] = nil
+	} else {
+		// No pending PCF, send basic packet
+		n, _, err = packet.WriteBasicPacket(
+			buffer, 
+			connection.defaultLFlag,
+			connection.defaultRFlag,
+			connection.defaultSFlag,
+			connection.cat,
+			connection.psn,
+			pse,
+			nil)
+
+		if err != nil {
+			return 0, -1, err
+		}
+	}
+
+	return connection.psn, n, nil
 }
 
 // Prepares the next packet to be sent by creating an empty (no set payload) PLUS packet

@@ -306,28 +306,25 @@ func (plusPacket *PLUSPacket) PCFValueUnprotected() ([]byte, error) {
 	return plusPacket.header[pcfILenIndex+1+offset : pcfILenIndex+1+int(pcfLen)], nil
 }
 
-// Returns the Header with unprotected fields zeroed out.
-// Safe to modfify as it is a copy.
-func (plusPacket *PLUSPacket) HeaderWithZeroes() []byte {
-	headerCopy := make([]byte, len(plusPacket.header))
-	copy(headerCopy, plusPacket.header)
+func HeaderWithZeroesRaw(headerBuffer []byte, targetBuffer []byte) {
+	copy(targetBuffer, headerBuffer)
 
-	if !plusPacket.XFlag() {
-		return headerCopy
+	if ((headerBuffer[3] >> 0) & 0x01) == 1 {
+		return // if it's a basic packet we're done
 	}
-
+	
 	pcfILenIndex := -1
 
-	if plusPacket.header[20] == 0x00 { //2 byte PCF type as usual
+	if headerBuffer[20] == 0x00 { //2 byte PCF type as usual
 		pcfILenIndex = 22
-	} else if plusPacket.header[20] == 0xFF { //no PCF Len/PCF I as usual
-		return headerCopy
+	} else if headerBuffer[20] == 0xFF { //no PCF Len/PCF I as usual
+		return
 	} else {
 		pcfILenIndex = 21
 	}
 
-	pcfLen := uint8(plusPacket.header[pcfILenIndex] >> 2)
-	pcfIntegrity := uint8(plusPacket.header[pcfILenIndex] & 0x03)
+	pcfLen := uint8(headerBuffer[pcfILenIndex] >> 2)
+	pcfIntegrity := uint8(headerBuffer[pcfILenIndex] & 0x03)
 
 	pcfValueIndex := pcfILenIndex + 1
 
@@ -343,9 +340,16 @@ func (plusPacket *PLUSPacket) HeaderWithZeroes() []byte {
 	}
 
 	for i := pcfUnprotectedStartIndex; i < pcfValueIndex+int(pcfLen); i++ {
-		headerCopy[i] = 0x00
+		targetBuffer[i] = 0x00
 	}
+}
 
+// Returns the Header with unprotected fields zeroed out.
+// Safe to modfify as it is a copy.
+func (plusPacket *PLUSPacket) HeaderWithZeroes() []byte {
+	headerCopy := make([]byte, len(plusPacket.header))
+	copy(headerCopy, plusPacket.header)
+	HeaderWithZeroesRaw(plusPacket.header, headerCopy)
 	return headerCopy
 }
 
@@ -542,7 +546,13 @@ func WriteBasicPacket(
 	pse uint32, 
 	payload []byte) (int, []byte, error) {
 
-	requiredLength := int(BASIC_HEADER_LEN) + len(payload)
+	var requiredLength int
+
+	if payload != nil {
+		requiredLength = int(BASIC_HEADER_LEN) + len(payload)
+	} else {
+		requiredLength = int(BASIC_HEADER_LEN)
+	}
 
 	if buffer == nil {
 		buffer = make([]byte, requiredLength) //allocate buffer if none provided
@@ -576,7 +586,7 @@ func WriteBasicPacket(
 
 	copy(buffer[20:], payload)
 
-	return requiredLength, buffer, nil
+	return requiredLength, buffer[:requiredLength], nil
 }
 
 // Writes an extended packet into the buffer. The buffer must be large
@@ -626,7 +636,13 @@ func WriteExtendedPacket(
 		length += ulen(pcfValue)
 	}
 
-	requiredLength := int(length) + len(payload)
+	var requiredLength int
+
+	if payload != nil {
+		requiredLength = int(length) + len(payload)
+	} else {
+		requiredLength = int(length)
+	}
 
 	if buffer == nil {
 		buffer = make([]byte, requiredLength) //allocate buffer if none provided
@@ -689,7 +705,7 @@ func WriteExtendedPacket(
 
 	copy(buffer[(BASIC_HEADER_LEN+ofs):], payload)
 
-	return requiredLength, buffer, nil
+	return requiredLength, buffer[:requiredLength], nil
 }
 
 // Construct a new basic plus packet
