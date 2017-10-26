@@ -144,6 +144,7 @@ func NewConnectionManager(packetConn net.PacketConn) *ConnectionManager {
 		newConnections:           make(chan *Connection, 16),
 		bufPool:                  sync.Pool{New: func() interface{} { return allocBuf(connectionManager) }},
 		packetPool:               sync.Pool{New: func() interface{} { return &packet.PLUSPacket{} }},
+		useNGoRoutines:			  0,
 	}
 
 	return connectionManager
@@ -165,6 +166,7 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
 		newConnections:           make(chan *Connection, 16),
 		bufPool:                  sync.Pool{New: func() interface{} { return allocBuf(connectionManager) }},
 		packetPool:               sync.Pool{New: func() interface{} { return &packet.PLUSPacket{} }},
+		useNGoRoutines:           0,
 	}
 
 	connection := NewConnection(connectionId, packetConn, remoteAddr, connectionManager)
@@ -791,7 +793,6 @@ func (connection *Connection) Read(data []byte) (int, error) {
 // This will perform encryption if a crypto context is set.
 func (connection *Connection) Write(data []byte) (int, error) {
 	connection.mutex.Lock()
-	defer connection.mutex.Unlock()
 
 	var payload []byte
 
@@ -802,6 +803,7 @@ func (connection *Connection) Write(data []byte) (int, error) {
 	psn, headerLen, err := connection.prepareNextRaw(connection.sendBuffer)
 
 	if err != nil {
+		connection.mutex.Unlock()
 		return 0, err
 	}
 
@@ -812,6 +814,7 @@ func (connection *Connection) Write(data []byte) (int, error) {
 			targetBuffer, data)
 
 		if err != nil {
+			connection.mutex.Unlock()
 			return 0, err
 		}
 
@@ -825,8 +828,6 @@ func (connection *Connection) Write(data []byte) (int, error) {
 	sendbuffer := connection.sendBuffer[:(headerLen + len(payload))] // resize
 	copy(sendbuffer[headerLen:], payload)                            // copy payload into it
 
-	n, err := connection.packetConn.WriteTo(sendbuffer, connection.currentRemoteAddr)
-
 	if connection.closeReceived && connection.defaultSFlag {
 		connection.close() //received and sending an SFlag?
 	} else if connection.defaultSFlag { // ... just sending an SFlag?
@@ -835,6 +836,12 @@ func (connection *Connection) Write(data []byte) (int, error) {
 			connection.closeSentPSN = psn
 		}
 	}
+
+	remoteAddr := connection.currentRemoteAddr
+
+	connection.mutex.Unlock()
+
+	n, err := connection.packetConn.WriteTo(sendbuffer, remoteAddr)
 
 	return n, err
 }
