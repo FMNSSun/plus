@@ -113,8 +113,8 @@ func (plusPacket *PLUSPacket) Payload() []byte {
 func (plusPacket *PLUSPacket) SetPayload(payload []byte) {
 	plusPacket.payload = payload
 	plusPacket.complete = nil // need to set this to nil because now
-	                          // header and payload may not refer to the same
-	                          // underlying buffer.
+	// header and payload may not refer to the same
+	// underlying buffer.
 }
 
 // Sets the payload... by overwritting the underlying buffer
@@ -170,8 +170,6 @@ func (plusPacket *PLUSPacket) PCFLenUnsafe() uint8 {
 	t, _ := plusPacket.PCFLen()
 	return t
 }
-
-
 
 // Returns the position of the PCF Len/PCF I byte in the
 // packet buffer.
@@ -311,14 +309,14 @@ func (plusPacket *PLUSPacket) PCFValueUnprotected() ([]byte, error) {
 // advised to check whether headerBuffer and targetBuffer are actually big enough
 // otherwise random things may happen as this function does not check whether the
 // buffer contains a valid buffer or not... it is assumed that all the necessary
-// checks have been done BEFORE calling this function. 
+// checks have been done BEFORE calling this function.
 func HeaderWithZeroesRaw(headerBuffer []byte, targetBuffer []byte) {
 	copy(targetBuffer, headerBuffer)
 
 	if ((headerBuffer[3] >> 0) & 0x01) == 1 {
 		return // if it's a basic packet we're done
 	}
-	
+
 	pcfILenIndex := -1
 
 	if headerBuffer[20] == 0x00 { //2 byte PCF type as usual
@@ -412,7 +410,7 @@ func (plusPacket *PLUSPacket) BufferNoCopy() []byte {
 // Sets the buffer of this packet while performing a
 // check whether the buffer contains a valid PLUS packet. You
 // might prefer using the NewPLUSPacket function. Please be aware that
-// this function will set PCF Integrity to zero if PCF Len is zero. 
+// this function will set PCF Integrity to zero if PCF Len is zero.
 // This will copy the buffer.
 func (plusPacket *PLUSPacket) SetBuffer(buffer_ []byte) error {
 	return plusPacket.setBuffer(buffer_, true)
@@ -421,7 +419,7 @@ func (plusPacket *PLUSPacket) SetBuffer(buffer_ []byte) error {
 // Sets the buffer of this packet while performing a
 // check whether the buffer contains a valid PLUS packet. You
 // might prefer using the NewPLUSPacket function. Please be aware that
-// this function will set PCF Integrity to zero if PCF Len is zero. 
+// this function will set PCF Integrity to zero if PCF Len is zero.
 // This will not copy the buffer.
 func (plusPacket *PLUSPacket) SetBufferNoCopy(buffer_ []byte) error {
 	return plusPacket.setBuffer(buffer_, false)
@@ -539,17 +537,17 @@ func NewPLUSPacket(buffer []byte) (*PLUSPacket, error) {
 // Writes a basic packet into the buffer. The buffer must be large
 // enough to contain the packet. Nil may be passed as buffer in which
 // case this function will allocated a buffer for you. The buffer may already
-// have been modified when an error is returned. 
+// have been modified when an error is returned.
 // Returns the amount of bytes written, the buffer (which will be the same as
 // the supplied buffer if not Nil was supplied) and an error (if any).
 func WriteBasicPacket(
-	buffer []byte, 
-	lFlag bool, 
-	rFlag bool, 
-	sFlag bool, 
-	cat uint64, 
-	psn uint32, 
-	pse uint32, 
+	buffer []byte,
+	lFlag bool,
+	rFlag bool,
+	sFlag bool,
+	cat uint64,
+	psn uint32,
+	pse uint32,
 	payload []byte) (int, []byte, error) {
 
 	var requiredLength int
@@ -568,9 +566,8 @@ func WriteBasicPacket(
 		return -1, buffer, errors.New("Buffer is not big enough.")
 	}
 
-
 	// lrsx
-   // 8421
+	// 8421
 	flags := uint8(0x00)
 
 	if lFlag {
@@ -585,7 +582,7 @@ func WriteBasicPacket(
 		flags |= uint8(0x02)
 	}
 
-	binary.BigEndian.PutUint32(buffer, (MAGIC << 4) | uint32(flags))
+	binary.BigEndian.PutUint32(buffer, (MAGIC<<4)|uint32(flags))
 	binary.BigEndian.PutUint64(buffer[4:], cat)
 	binary.BigEndian.PutUint32(buffer[12:], psn)
 	binary.BigEndian.PutUint32(buffer[16:], pse)
@@ -598,22 +595,22 @@ func WriteBasicPacket(
 // Writes an extended packet into the buffer. The buffer must be large
 // enough to contain the packet. Nil may be passed as buffer in which
 // case this function will allocated a buffer for you. The buffer may already
-// have been modified when an error is returned. 
+// have been modified when an error is returned.
 // Returns the amount of bytes written, the buffer (which will be the same as
 // the supplied buffer if not Nil was supplied) and an error (if any).
 func WriteExtendedPacket(
-	buffer []byte, 
+	buffer []byte,
 	lFlag bool,
 	rFlag bool,
 	sFlag bool,
 	cat uint64,
-	psn uint32, 
-	pse uint32, 
-	pcfType uint16, 
-	pcfIntegrity uint8, 
-	pcfValue []byte, 
+	psn uint32,
+	pse uint32,
+	pcfType uint16,
+	pcfIntegrity uint8,
+	pcfValue []byte,
 	payload []byte) (int, []byte, error) {
-	
+
 	length := BASIC_HEADER_LEN + 1
 
 	if len(pcfValue) >= 64 {
@@ -659,7 +656,7 @@ func WriteExtendedPacket(
 	}
 
 	// lrsx
-   // 8421
+	// 8421
 	flags := uint8(0x01) // x flag must be set
 
 	if lFlag {
@@ -674,7 +671,7 @@ func WriteExtendedPacket(
 		flags |= uint8(0x02)
 	}
 
-	binary.BigEndian.PutUint32(buffer, (MAGIC << 4) | uint32(flags))
+	binary.BigEndian.PutUint32(buffer, (MAGIC<<4)|uint32(flags))
 	binary.BigEndian.PutUint64(buffer[4:], cat)
 	binary.BigEndian.PutUint32(buffer[12:], psn)
 	binary.BigEndian.PutUint32(buffer[16:], pse)
@@ -705,7 +702,7 @@ func WriteExtendedPacket(
 
 	ofs += ulen(pcfValue)
 
-	if int(BASIC_HEADER_LEN+ofs) != (requiredLength-len(payload)) {
+	if int(BASIC_HEADER_LEN+ofs) != (requiredLength - len(payload)) {
 		return -1, nil, fmt.Errorf("BUG %d, %d", BASIC_HEADER_LEN+ofs, length)
 	}
 
@@ -760,7 +757,7 @@ func NewExtendedPLUSPacket(
 	var plusPacket PLUSPacket
 
 	_, buf, err := WriteExtendedPacket(
-		nil, 
+		nil,
 		lFlag,
 		rFlag,
 		sFlag,

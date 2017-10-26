@@ -127,7 +127,7 @@ type ConnectionManager struct {
 	// useNGoRoutines
 	useNGoRoutines uint8
 
-	bufPool sync.Pool
+	bufPool    sync.Pool
 	packetPool sync.Pool
 }
 
@@ -142,8 +142,8 @@ func NewConnectionManager(packetConn net.PacketConn) *ConnectionManager {
 		maxPacketSize:            8192,
 		dropUndecryptablePackets: true,
 		newConnections:           make(chan *Connection, 16),
-		bufPool:                  sync.Pool { New : func() interface{} { return allocBuf(connectionManager) } },
-		packetPool:               sync.Pool { New : func() interface{} { return &packet.PLUSPacket{} } }, 
+		bufPool:                  sync.Pool{New: func() interface{} { return allocBuf(connectionManager) }},
+		packetPool:               sync.Pool{New: func() interface{} { return &packet.PLUSPacket{} }},
 	}
 
 	return connectionManager
@@ -163,8 +163,8 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
 		clientCAT:                connectionId,
 		dropUndecryptablePackets: true,
 		newConnections:           make(chan *Connection, 16),
-		bufPool:                  sync.Pool { New : func() interface{} { return allocBuf(connectionManager) } },
-		packetPool:               sync.Pool { New : func() interface{} { return &packet.PLUSPacket{} } }, 
+		bufPool:                  sync.Pool{New: func() interface{} { return allocBuf(connectionManager) }},
+		packetPool:               sync.Pool{New: func() interface{} { return &packet.PLUSPacket{} }},
 	}
 
 	connection := NewConnection(connectionId, packetConn, remoteAddr, connectionManager)
@@ -683,7 +683,7 @@ type Connection struct {
 
 	pcfFeedback map[uint16][]byte
 
-	sendBuffer []byte
+	sendBuffer   []byte
 	headerBuffer []byte
 }
 
@@ -787,7 +787,7 @@ func (connection *Connection) Read(data []byte) (int, error) {
 	return n, nil
 }
 
-// Write data to this connection. 
+// Write data to this connection.
 // This will perform encryption if a crypto context is set.
 func (connection *Connection) Write(data []byte) (int, error) {
 	connection.Lock()
@@ -798,7 +798,7 @@ func (connection *Connection) Write(data []byte) (int, error) {
 	if connection.closed {
 		return 0, ErrConnClosed
 	}
-	
+
 	psn, headerLen, err := connection.prepareNextRaw(connection.sendBuffer)
 
 	if err != nil {
@@ -823,7 +823,7 @@ func (connection *Connection) Write(data []byte) (int, error) {
 	//fmt.Printf("headerLen := %d, len(payload) := %d, cap(sendBuffer) := %d, s := %d\n",
 	//	headerLen, len(payload), cap(connection.sendBuffer), headerLen + len(payload))
 	sendbuffer := connection.sendBuffer[:(headerLen + len(payload))] // resize
-	copy(sendbuffer[headerLen:], payload) // copy payload into it
+	copy(sendbuffer[headerLen:], payload)                            // copy payload into it
 
 	n, err := connection.packetConn.WriteTo(sendbuffer, connection.currentRemoteAddr)
 
@@ -891,7 +891,7 @@ func (connection *Connection) prepareNextRaw(buffer []byte) (uint32, int, error)
 		log(2, "Pending PCF(%d,%d,%x)", pcfType, pcfIntegrity, pcfValue)
 		// Pending PCF, send extended packet
 		n, _, err = packet.WriteExtendedPacket(
-			buffer, 
+			buffer,
 			connection.defaultLFlag,
 			connection.defaultRFlag,
 			connection.defaultSFlag,
@@ -913,7 +913,7 @@ func (connection *Connection) prepareNextRaw(buffer []byte) (uint32, int, error)
 	} else {
 		// No pending PCF, send basic packet
 		n, _, err = packet.WriteBasicPacket(
-			buffer, 
+			buffer,
 			connection.defaultLFlag,
 			connection.defaultRFlag,
 			connection.defaultSFlag,

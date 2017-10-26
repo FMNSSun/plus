@@ -42,11 +42,11 @@ func randomBuf() []byte {
 	return packet
 }
 
-// Fuzzy testing. 
+// Fuzzy testing.
 func TestFuzzy(t *testing.T) {
 
 	rand.Seed(time.Now().UTC().UnixNano())
-	
+
 	for i := 0; i < 1024*1200; i++ {
 		rbuf := randomBuf()
 		plusPacket, err := NewPLUSPacket(rbuf)
@@ -56,7 +56,7 @@ func TestFuzzy(t *testing.T) {
 		} else {
 			l := plusPacket.PCFLenUnsafe()
 
-			if l == 0 { 
+			if l == 0 {
 				continue //skip this because if PCFLen == 0 then the receiver has to set it to zero.
 			}
 
@@ -66,7 +66,6 @@ func TestFuzzy(t *testing.T) {
 				t.Errorf("Buffer mismatch 1 ")
 				return
 			}
-
 
 			if !plusPacket.XFlag() {
 				plusPacket_ := NewBasicPLUSPacket(
@@ -110,12 +109,10 @@ func TestFuzzy(t *testing.T) {
 					t.Errorf("Buffer mismatch 3 ")
 					return
 				}
-			}			
+			}
 		}
 	}
 }
-
-
 
 // Test illegal values in constructor.
 func TestIllegalValues(t *testing.T) {
@@ -145,7 +142,7 @@ func TestSerializePacket4(t *testing.T) {
 		0x12, 0x34, 0x56, 0x78, // cat..
 		0x13, 0x11, 0x11, 0x11, // psn
 		0x23, 0x22, 0x22, 0x22, // pse
-		0xFF, // 0xff == no pcfi, pcfvalue
+		0xFF,                   // 0xff == no pcfi, pcfvalue
 		0x99, 0x98, 0x97, 0x96} // 4 bytes payload
 
 	lFlag := true
