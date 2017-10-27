@@ -1,8 +1,8 @@
 package PLUS_test
 
 import (
-	. "plus"
-	packet "plus/packet"
+	. "github.com/mami-project/plus-lib"
+	packet "github.com/mami-project/plus-lib/packet"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"

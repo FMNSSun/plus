@@ -1,6 +1,6 @@
 package PLUS
 
-import "plus/packet"
+import "github.com/mami-project/plus-lib/packet"
 import "fmt"
 import "sync"
 import "net"
