@@ -416,7 +416,7 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 
 	if plusPacket.XFlag() { //extended header? need additional handling here
 		data, err := plus.handleExtendedPacket(plusPacket)
-		log(0, "Unprotected part: %x", data)
+		//log(0, "Unprotected part: %x", data)
 		return connection, data, err
 	}
 
@@ -588,7 +588,7 @@ func (plus *ConnectionManager) WritePacket(plusPacket *packet.PLUSPacket, addr n
 		return fmt.Errorf("Expected to send %d bytes but could only send %d bytes!", len(buffer), n)
 	}
 
-	log(1, "cm: WritePacket sent packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
+	//log(1, "cm: WritePacket sent packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
 
 	return nil
 }
@@ -765,7 +765,7 @@ func (connection *Connection) AddPCFFeedback(feedbackData []byte) error {
 	connection.mutex.Lock()
 	defer connection.mutex.Unlock()
 
-	log(1, "%s\t\t\tReceived PCF feedback: %x", connection.packetConn.LocalAddr().String(), feedbackData)
+	//log(1, "%s\t\t\tReceived PCF feedback: %x", connection.packetConn.LocalAddr().String(), feedbackData)
 
 	return nil
 }
@@ -908,7 +908,7 @@ func (connection *Connection) prepareNextRaw(buffer []byte) (uint32, int, error)
 	}
 
 	if ok {
-		log(2, "Pending PCF(%d,%d,%x)", pcfType, pcfIntegrity, pcfValue)
+		//log(2, "Pending PCF(%d,%d,%x)", pcfType, pcfIntegrity, pcfValue)
 		// Pending PCF, send extended packet
 		n, _, err = packet.WriteExtendedPacket(
 			buffer,
@@ -1055,7 +1055,7 @@ func (connection *Connection) AddFeedbackData(feedbackData []byte) error {
 	_, ok := connection.pcfFeedback[pcfType]
 
 	if !ok {
-		log(0, "c: Received unrequested PCF feedback!")
+		//log(0, "c: Received unrequested PCF feedback!")
 		return nil // wasn't requested so ignore it.
 	} else {
 		connection.pcfFeedback[pcfType] = unprotected
@@ -1065,7 +1065,7 @@ func (connection *Connection) AddFeedbackData(feedbackData []byte) error {
 }
 
 func (connection *Connection) queuePCFRequest(pcfType uint16, pcfIntegrity uint8, pcfValue []byte) error {
-	log(0, "c: QueuePCFRequest(%d,%d,%x)", pcfType, pcfIntegrity, pcfValue)
+	//log(0, "c: QueuePCFRequest(%d,%d,%x)", pcfType, pcfIntegrity, pcfValue)
 
 	if connection.pcfElements >= len(connection.pcfRequests) {
 		return fmt.Errorf("Buffer is full!")
