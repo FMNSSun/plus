@@ -406,11 +406,13 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 	connection.mutex.Lock()
 	defer connection.mutex.Unlock()
 
-	if plusPacket.PSN() == 1 && plus.clientMode {
+	packetPSN := plusPacket.PSN()
+
+	if packetPSN == 1 && plus.clientMode {
 		connection.queuePCFRequest(packet.PCF_TYPE_HOP_COUNT, packet.PCF_INTEGRITY_ZERO, []byte{0x00}) // send a HOP_COUNT request
 	}
 
-	connection.pse = plusPacket.PSN()
+	connection.pse = packetPSN
 
 	if plusPacket.XFlag() { //extended header? need additional handling here
 		data, err := plus.handleExtendedPacket(plusPacket)
