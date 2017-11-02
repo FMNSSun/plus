@@ -845,6 +845,13 @@ func (connection *Connection) Write(data []byte) (int, error) {
 	copy(buffer, sendbuffer)
 	connection.mutex.Unlock()
 
+	/*
+		It turned out that holding the lock for the duration of the WriteTo call makes things very slow
+		so we release the lock before this call but this also means we require a temporary buffer
+		where we copy the sendbuffer into (otherwise another thread might call this method and thinks go
+		wrong). 
+	*/
+
 	n, err := connection.packetConn.WriteTo(buffer, remoteAddr)
 
 	connection.connManager.ReturnBuffer(buffer)
