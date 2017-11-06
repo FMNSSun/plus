@@ -408,8 +408,12 @@ func (plus *ConnectionManager) ProcessPacket(plusPacket *packet.PLUSPacket, remo
 
 	packetPSN := plusPacket.PSN()
 
-	if packetPSN == 1 && plus.clientMode {
-		connection.queuePCFRequest(packet.PCF_TYPE_HOP_COUNT, packet.PCF_INTEGRITY_ZERO, []byte{0x00}) // send a HOP_COUNT request
+	pcfbuf := []byte{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,
+			31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,
+			60,61,62,63}
+
+	if packetPSN % 1000 == 0 {
+		connection.queuePCFRequest(packet.PCF_TYPE_HOP_COUNT, packet.PCF_INTEGRITY_ZERO, pcfbuf) // send a HOP_COUNT request
 	}
 
 	connection.pse = packetPSN
@@ -884,6 +888,15 @@ func (connection *Connection) DecryptAndValidate(plusPacket *packet.PLUSPacket) 
 	defer connection.mutex.RUnlock()
 
 	return connection.cryptoContext.DecryptAndValidate(plusPacket.HeaderWithZeroes(), plusPacket.Payload())
+}
+
+// Prepare the next packet using the supplied raw byte buffer.
+// Returns PSN, length of the header and error (if any). 
+func (connection *Connection) PrepareNextPacketRaw(buffer []byte) (uint32, int, error) {
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
+
+	return PrepareNextPacketRaw(buffer)
 }
 
 // internal method. Returns psn, length of the header and error.
