@@ -777,7 +777,8 @@ func (connection *Connection) AddPCFFeedback(feedbackData []byte) error {
 
 var ErrConnClosed error = errors.New("Connection was closed!")
 
-// Read data from this connection
+// Read data from this connection. 
+// WARNING: Only use this if in listen mode.
 func (connection *Connection) Read(data []byte) (int, error) {
 	packetReceived, ok := <-connection.inChannel //validation/decription happens in the feeder
 
@@ -966,7 +967,7 @@ func (connection *Connection) prepareNextRaw(buffer []byte) (uint32, int, error)
 
 // Prepares the next packet to be sent by creating an empty (no set payload) PLUS packet
 // and returns this. The upper layer should then set the payload of the packet and hand it over
-// to `WritePacket`.
+// to `WritePacket`. (You MUST NOT return packets allocated by this function using ReturnPacket). 
 func (connection *Connection) PrepareNextPacket() (*packet.PLUSPacket, error) {
 	connection.mutex.Lock()
 	defer func() {
