@@ -12,6 +12,9 @@ import "math/rand"
 import "math/big"
 import m "math"
 
+var prng *rand.Rand = nil
+var prngMutex *sync.Mutex = &sync.Mutex {}
+
 // Returns a cryptographically strong random PSN value
 // if possible, otherwise it will fallback to a regular
 // PRNG.
@@ -19,7 +22,16 @@ func RandomPSN() uint32 {
 	bigNum, err := crand.Int(crand.Reader, big.NewInt(m.MaxUint32))
 
 	if err != nil {
-		return rand.Uint32()
+		// Sources are not safe for concurrent use.
+		prngMutex.Lock()
+		defer prngMutex.Unlock()
+
+		// Create a source if we don't have one.
+		if prng == nil {
+			prng = rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
+		}
+
+		return prng.Uint32()
 	}
 
 	return uint32(bigNum.Uint64())
