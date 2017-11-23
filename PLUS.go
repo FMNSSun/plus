@@ -89,6 +89,7 @@ type CryptoContext interface {
 // Provides PLUS with methods to send feedback back.
 // Relevant for PCF capabilities. You must not read or write to the
 // connection or change the connection's state during these callbacks.
+// This call back is only invoked when the connection manager is in listen mode. 
 type FeedbackChannel interface {
 	// Send feedback back through.
 	SendFeedback([]byte) error
@@ -107,6 +108,20 @@ type FeedbackChannel interface {
 // the connection manager will send feedback data back automatically. To distinguish
 // data packets from feedback packets it will secretly/transparentely add a prefix byte
 // (0xFF = feedback packet) (0x00 = data packet). 
+//
+// In listen mode the connection manager will listen automatically on the connection and handle
+// read/writes. It is activated by calling the Listen() function. It is possible to use the
+// connection manager as a pure state machine and call functions like `ProcessPacket` and
+// `PrepareNextPacket`/`PrepareNextPacketRaw` manually as well as it is possible to call
+// `ReadPacket`/`WritePacket` manually (which will read from the underlying net.PacketConn). However,
+// it's also possible to use the connection manager without any underlying connection simply by feeding
+// data to it. 
+//
+// The connection manager can be used in various ways to allow easy integration into existing code
+// that may have very different software architecture. The connection manager is aimed at providing
+// a means of integration that requires little changes to existing code and thus supports many different
+// use cases. The downside of this is however that the API is a bit more complicated and one must take
+// care especially when mixing different modes (which is also supported). 
 type ConnectionManager struct {
 	// map of connections
 	connections map[uint64]*Connection
