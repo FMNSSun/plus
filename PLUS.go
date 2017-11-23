@@ -139,6 +139,9 @@ type ConnectionManager struct {
 	// useNGoRoutines
 	useNGoRoutines uint8
 
+	// transparent Mode?
+	transparentMode bool
+
 	bufPool    sync.Pool
 	packetPool sync.Pool
 }
@@ -185,6 +188,15 @@ func NewConnectionManagerClient(packetConn net.PacketConn, connectionId uint64, 
 	connectionManager.connections[connection.cat] = connection
 
 	return connectionManager, connection
+}
+
+// Puts the connection manager into transparent mode. You should call this before
+// calling Listen(). You must not call it after Listen().
+func (plus *ConnectionManager) SetTransparentMode() {
+	plus.mutex.Lock()
+	defer plus.mutex.Unlock()
+
+	plus.transparentMode = true
 }
 
 // Obtain a W lock to the connection manager. You shouldn't have to call this.
@@ -259,16 +271,19 @@ func (plus *ConnectionManager) listenLoop() error {
 			log(0, "cm: Feedback data available!")
 
 			// TODO: What do we do with errors here?
-			err = connection.feedbackChannel.SendFeedback(feedbackData)
+			if !connection.connManager.transparentMode {
+				err = connection.feedbackChannel.SendFeedback(feedbackData)
 
-			if err != nil {
-				log(2, "cm: SendFeedback failed for connection %d", connection.cat)
-			} else {
-				log(0, "cm: Notified feedback channel!")
+				if err != nil {
+					log(2, "cm: SendFeedback failed for connection %d", connection.cat)
+				} else {
+					log(0, "cm: Notified feedback channel!")
+				}
 			}
 		}
 
 		packetValid := false
+		var returnedFeedback []byte = nil
 
 		if connection.cryptoContext != nil {
 			log(1, "cm: Decrypting packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
@@ -276,7 +291,9 @@ func (plus *ConnectionManager) listenLoop() error {
 				plusPacket.HeaderWithZeroes(),
 				plusPacket.Payload())
 
+
 			packetValid = ok
+			forwardPacket := true
 
 			if err != nil && plus.dropUndecryptablePackets { //drop undecryptable packets?
 				log(1, "cm: Undecryptable packet dropped")
@@ -285,17 +302,32 @@ func (plus *ConnectionManager) listenLoop() error {
 				if !ok {
 					log(1, "cm: Invalid packet skipped")
 				} else {
-					plusPacket.SetPayload(_Payload)
+					if connection.connManager.transparentMode {
+						if len(_Payload) < 1 { // TODO: ignore this? Forward error? It's probably a bogus packet.
+							prefix := _Payload[0]
+							_Payload = _Payload[1:]
 
-					log(0, "cm: Forwarding packet...")
+							if prefix == 0xFF { // Aha. we got feedback back
+								returnedFeedback = _Payload
+								forwardPacket = false
+							}
+						}
+					}
 
-					select {
-					case connection.inChannel <- &packetReceived{packet: plusPacket, err: err}:
-						log(0, "cm: Packet forwarded...")
+					// Only forward it if it's not a feedback reply in transparent mode
+					if forwardPacket {
+						plusPacket.SetPayload(_Payload) //TODO: can we use SetPayloadOverwrite here?
 
-					default:
-						log(0, "cm: Consumer too slow!")
-						// drop packet if consumer is too slow
+						log(0, "cm: Forwarding packet...")
+
+						select {
+						case connection.inChannel <- &packetReceived{packet: plusPacket, err: err}:
+							log(0, "cm: Packet forwarded...")
+
+						default:
+							log(0, "cm: Consumer too slow!")
+							// drop packet if consumer is too slow
+						}
 					}
 				}
 			}
@@ -312,6 +344,18 @@ func (plus *ConnectionManager) listenLoop() error {
 		}
 
 		connection.mutex.RUnlock()
+
+		if connection.connManager.transparentMode {
+			if feedbackData != nil {
+				// sendFeedback requires the mutex to be locked but it will unlock it. 
+				connection.mutex.Lock()
+				connection.sendFeedback(feedbackData)
+			}
+
+			if returnedFeedback != nil {
+				connection.addFeedbackData(returnedFeedback)
+			}
+		}
 
 		connection.mutex.Lock()
 
@@ -814,6 +858,17 @@ func (connection *Connection) Read(data []byte) (int, error) {
 func (connection *Connection) Write(data []byte) (int, error) {
 	connection.mutex.Lock()
 
+	return connection.write(data, 0x00)
+}
+
+// internal sendfeedback. Expects the mutex to be locked but will release it.
+func (connection *Connection) sendFeedback(feedbackData []byte) (int, error) {
+	return connection.write(feedbackData, 0xFF) // 0xFF is the prefix for feedback packets
+}
+
+// internal write. Expects the mutex to be locked, but this will unlock
+// the mutex. 
+func (connection *Connection) write(data []byte, prefix byte) (int, error) {
 	var payload []byte
 
 	if connection.closed {
@@ -841,6 +896,11 @@ func (connection *Connection) Write(data []byte) (int, error) {
 		payload = _Payload
 	} else {
 		payload = data
+	}
+
+	if connection.connManager.transparentMode { // if in transparent mode add the prefix
+		connection.sendBuffer[headerLen] = prefix
+		headerLen += 1
 	}
 
 	//fmt.Printf("headerLen := %d, len(payload) := %d, cap(sendBuffer) := %d, s := %d\n",
@@ -1061,6 +1121,11 @@ func (connection *Connection) AddFeedbackData(feedbackData []byte) error {
 	connection.mutex.Lock()
 	defer connection.mutex.Unlock()
 
+	return connection.addFeedbackData(feedbackData)
+}
+
+// internal addFeedbackData. Requires the mutex to be locked. 
+func (connection *Connection) addFeedbackData(feedbackData []byte) error {
 	plusPacket, err := packet.NewPLUSPacket(feedbackData)
 
 	if err != nil {
