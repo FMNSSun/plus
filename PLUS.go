@@ -101,6 +101,12 @@ type FeedbackChannel interface {
 // Manages connections. You must not change attributes of the connection
 // manager during the InitConn callback. The connection manager will create new connections
 // as necessary invoking the InitConn callback during connection creation.
+// 
+// In transparent mode the connection manager will handle feedback internally and won't invoke
+// the SendFeedback callback and you also don't have to call AddFeedback. In transparent mode
+// the connection manager will send feedback data back automatically. To distinguish
+// data packets from feedback packets it will secretly/transparentely add a prefix byte
+// (0xFF = feedback packet) (0x00 = data packet). 
 type ConnectionManager struct {
 	// map of connections
 	connections map[uint64]*Connection
