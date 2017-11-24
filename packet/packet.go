@@ -311,9 +311,11 @@ func (plusPacket *PLUSPacket) PCFValueUnprotected() ([]byte, error) {
 // buffer contains a valid buffer or not... it is assumed that all the necessary
 // checks have been done BEFORE calling this function.
 func HeaderWithZeroesRaw(headerBuffer []byte, targetBuffer []byte) {
+	fmt.Printf("%d %q\n", len(headerBuffer), headerBuffer)
+	
 	copy(targetBuffer, headerBuffer)
 
-	if ((headerBuffer[3] >> 0) & 0x01) == 1 {
+	if ((headerBuffer[3] >> 0) & 0x01) != 0x01 {
 		return // if it's a basic packet we're done
 	}
 
