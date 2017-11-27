@@ -810,6 +810,24 @@ func NewConnection(cat uint64, packetConn net.PacketConn, remoteAddr net.Addr, c
 	return &connection
 }
 
+// Returns whether a stop was sent or not and
+// the PSN of the corresponding packet.
+func (connection *Connection) StopSent() (bool, uint32) {
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
+
+	return connection.closeSent, connection.closeSentPSN
+}
+
+// Returns whether a stop was received or not and
+// the PSN of the corresponding packet.
+func (connection *Connection) StopReceived() (bool, uint32) {
+	connection.mutex.Lock()
+	defer connection.mutex.Unlock()
+
+	return connection.closeReceived, connection.closeReceivedPSN
+}
+
 // Changes the CAT
 func (connection *Connection) SetCAT(newCat uint64) {
 	connection.mutex.Lock()
@@ -1319,7 +1337,10 @@ func (connection *Connection) SetRemoteAddr(remoteAddr net.Addr) {
 	connection.currentRemoteAddr = remoteAddr
 }
 
-// Sets the CloseConn callback
+// Sets the CloseConn callback which is invoked when the connection is closed.
+// Beware that while the connection is closed this doesn't necessarily mean that the connection
+// has been fully cleaned-up yet. This callback should not be used to modify the connection or
+// read/write to/from it. 
 func (connection *Connection) SetCloseConn(closeConn func(connection *Connection) error) {
 	connection.mutex.Lock()
 	defer connection.mutex.Unlock()
