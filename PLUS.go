@@ -594,6 +594,8 @@ func (plus *ConnectionManager) ReadPacket() (*packet.PLUSPacket, net.Addr, error
 		return nil, addr, err
 	}
 
+	log(0, "cm: ReadFrom successful")
+
 	plusPacket := plus.packetPool.Get().(*packet.PLUSPacket)
 
 	err = plusPacket.SetBufferNoCopy(buffer[:n])
@@ -620,6 +622,8 @@ func (plus *ConnectionManager) ReadAndProcessPacket() (*Connection, *packet.PLUS
 	if err != nil {
 		return connection, nil, nil, nil, err // make sure we pass connection because it might be InvalidConnection
 	}
+
+	log(0, "cm: ProcessPacket successful")
 
 	return connection, plusPacket, addr, feedbackData, nil
 }
