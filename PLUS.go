@@ -217,6 +217,8 @@ func (plus *ConnectionManager) SetTransparentMode() {
 	plus.mutex.Lock()
 	defer plus.mutex.Unlock()
 
+	log(2, "cm: SetTransparentMode")
+
 	plus.transparentMode = true
 }
 
@@ -304,7 +306,27 @@ func (plus *ConnectionManager) listenLoop() error {
 		}
 
 		packetValid := false
-		var returnedFeedback []byte = nil
+
+		payload := plusPacket.Payload()
+		prefix := byte(0x00)
+		forwardPacket := true
+
+		if connection.connManager.transparentMode {
+			if len(payload) > 1 {
+				prefix = payload[0]
+				payload = payload[1:]
+				plusPacket.SetPayload(payload)
+
+				if prefix == 0xFF {
+					forwardPacket = false
+				}
+
+			} else {
+				// TODO: ignore this? Forward error? It's probably a bogus packet.
+				log(0, "cm: Packet too small for TM!")
+				forwardPacket = false
+			}
+		}
 
 		if connection.cryptoContext != nil {
 			log(1, "cm: Decrypting packet %d/%d", plusPacket.PSN(), plusPacket.PSE())
@@ -313,46 +335,24 @@ func (plus *ConnectionManager) listenLoop() error {
 				plusPacket.Payload())
 
 
-			packetValid = ok
-			forwardPacket := true
+			packetValid := ok
 
 			if err != nil && plus.dropUndecryptablePackets { //drop undecryptable packets?
 				log(1, "cm: Undecryptable packet dropped")
+				forwardPacket = false
 			} else {
 
-				if !ok {
-					log(1, "cm: Invalid packet skipped")
-				} else {
-					if connection.connManager.transparentMode {
-						if len(_Payload) < 1 { // TODO: ignore this? Forward error? It's probably a bogus packet.
-							prefix := _Payload[0]
-							_Payload = _Payload[1:]
-
-							if prefix == 0xFF { // Aha. we got feedback back
-								returnedFeedback = _Payload
-								forwardPacket = false
-							}
-						}
-					}
-
-					// Only forward it if it's not a feedback reply in transparent mode
-					if forwardPacket {
-						plusPacket.SetPayload(_Payload) //TODO: can we use SetPayloadOverwrite here?
-
-						log(0, "cm: Forwarding packet...")
-
-						select {
-						case connection.inChannel <- &packetReceived{packet: plusPacket, err: err}:
-							log(0, "cm: Packet forwarded...")
-
-						default:
-							log(0, "cm: Consumer too slow!")
-							// drop packet if consumer is too slow
-						}
-					}
+				if !packetValid {
+					log(1, "cm: Invalid packet dropped")
+					forwardPacket = false
 				}
 			}
-		} else {
+
+			plusPacket.SetPayload(_Payload)
+			payload = _Payload
+		}
+
+		if forwardPacket { //only forward data packets
 			log(0, "cm: Forwarding packet...")
 
 			select {
@@ -370,11 +370,13 @@ func (plus *ConnectionManager) listenLoop() error {
 			if feedbackData != nil {
 				// sendFeedback requires the mutex to be locked but it will unlock it. 
 				connection.mutex.Lock()
+				log(1, "cm: Sending Feedback %x", feedbackData)
 				connection.sendFeedback(feedbackData)
 			}
 
-			if returnedFeedback != nil {
-				connection.addFeedbackData(returnedFeedback)
+			if prefix == 0xFF {
+				log(1, "cm: Returned Feedback %x", payload)
+				connection.AddFeedbackData(payload)
 			}
 		}
 
@@ -969,6 +971,7 @@ func (connection *Connection) write(data []byte, prefix byte) (int, error) {
 		wrong).
 	*/
 
+	log(0, "cm: Sending %x", buffer)
 	n, err := connection.packetConn.WriteTo(buffer, remoteAddr)
 
 	connection.connManager.ReturnBuffer(buffer)
